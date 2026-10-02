@@ -1,6 +1,6 @@
 # 官方 Codex Python SDK 调查
 
-日期：2026-10-02（Asia/Shanghai）。这份文档记录包安装与签名检查，不代表已完成连接 / 模型 Spike。
+日期：2026-10-02（Asia/Shanghai）。以下为开发前签名调查的历史记录；后续连接、模型和打包实测已完成，当前实现与证据以 [Spike 报告](spike-report.md)、[验收报告](acceptance-report.md) 为准。
 
 ## 官方来源
 

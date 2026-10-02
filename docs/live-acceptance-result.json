@@ -1,0 +1,33 @@
+{
+  "directory": "C:\\Users\\kunpeng\\AppData\\Roaming\\CodexDispatcher\\acceptance\\de9fd72b-7a3f-4237-90a7-2041094a0c4e",
+  "repository": "imherro/CodexDispatcher",
+  "issues": [
+    "https://github.com/imherro/CodexDispatcher/issues/1",
+    "https://github.com/imherro/CodexDispatcher/issues/2"
+  ],
+  "target_thread_id": "01a0fd22-ceb4-7e51-ab8c-f457ade42af7",
+  "empty_poll_model_calls": 0,
+  "target_calls": [
+    "01a0fd22-ceb4-7e51-ab8c-f457ade42af7",
+    "01a0fd22-ceb4-7e51-ab8c-f457ade42af7"
+  ],
+  "normalizer_calls": 0,
+  "records": [
+    {
+      "issue_number": 2,
+      "target_thread_id": "01a0fd22-ceb4-7e51-ab8c-f457ade42af7",
+      "turn_id": "01a0fd25-0e21-76b0-a6a9-c11fdcd54252",
+      "status": "completed",
+      "final_response": "DISPATCHER-ACCEPTANCE-8827 Issue #2 Dispatch ID: 07a57e44-bcdd-4495-8cf6-0ddbd01234df"
+    },
+    {
+      "issue_number": 1,
+      "target_thread_id": "01a0fd22-ceb4-7e51-ab8c-f457ade42af7",
+      "turn_id": "01a0fd24-1fc9-7682-9abb-f7befe8dbe79",
+      "status": "completed",
+      "final_response": "DISPATCHER-ACCEPTANCE-8827 Issue #1 Dispatch ID: 02e2c64a-fe52-4c88-8e59-03fac00290c8"
+    }
+  ],
+  "project_unchanged": true,
+  "status": "passed"
+}

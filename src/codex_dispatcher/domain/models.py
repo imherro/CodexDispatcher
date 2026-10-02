@@ -172,3 +172,7 @@ class ThreadBusy(DispatchError):
 
 class RecoveryRequired(DispatchError):
     """Submission outcome is unknown: never retry automatically."""
+
+
+class WorkerPaused(DispatchError):
+    pass

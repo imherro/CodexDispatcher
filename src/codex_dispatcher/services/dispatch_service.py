@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from codex_dispatcher.domain.models import DispatchError, Issue, RecoveryRequired, ThreadBusy, Worker, now
+from codex_dispatcher.domain.models import DispatchError, Issue, RecoveryRequired, ThreadBusy, Worker, WorkerPaused, now
 from .template_service import build_task, validate_template
 from .security import redact
 
@@ -51,7 +51,7 @@ class DispatchService:
                             'thread_id': worker.target_thread_id, 'prompt': redact(build_task(worker, issue, normalized))})
         return prompts
 
-    def process_record(self, identifier):
+    def process_record(self, identifier, can_send=lambda: True):
         record = self.db.record(identifier)
         if not record or not self.db.claim(identifier):
             return 'blocked'
@@ -66,6 +66,8 @@ class DispatchService:
                 self.db.update_record(identifier, status='queued', error='Worker 已禁用')
                 return 'paused'
             worker.validate()
+            if not can_send():
+                raise WorkerPaused('监视已停止，任务保留在队列中。')
             normalized = self.codex.normalize(issue, worker.dispatcher_model, worker.dispatcher_reasoning) \
                 if worker.dispatcher_enabled else None
             prompt = build_task(worker, issue, normalized, dispatch_id=identifier)
@@ -80,13 +82,16 @@ class DispatchService:
             result = self.codex.send_task(worker.target_thread_id, prompt, worker.target_project,
                                          allow_mismatch=worker.allow_mismatch,
                                          model=worker.target_model if worker.override_target_model else None,
-                                         on_started=started, on_event=event)
+                                         on_started=started, on_event=event, can_send=can_send)
             status = 'completed' if result.status == 'completed' else 'failed'
             self.db.update_record(identifier, status=status, finished_at=now(), final_response=result.final_response,
                                   error=result.error or ('' if status == 'completed' else f'Turn {result.status}'))
             self.emit({'kind': status, 'worker_id': worker.id, 'record_id': identifier,
                        'text': f'Issue #{issue.number}: {status}'})
             return status
+        except WorkerPaused as exc:
+            self.db.update_record(identifier, status='queued', error=str(exc))
+            return 'paused'
         except ThreadBusy as exc:
             attempts = record['attempts'] + 1
             status = 'queued' if attempts < 6 else 'failed'

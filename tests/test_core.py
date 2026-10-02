@@ -288,3 +288,10 @@ def test_reasoning_event_not_displayed():
 def test_sdk_default_approval_not_accepted():
     assert CodexService._approval_handler('item/commandExecution/requestApproval', {}) == {'decision':'decline'}
     assert CodexService._approval_handler('item/fileChange/requestApproval', {}) == {'decision':'decline'}
+
+
+def test_stop_keeps_reserved_task_queued(core, worker):
+    identifier = core.service.discover(worker)[0]
+    assert core.service.process_record(identifier, can_send=lambda: False) == 'paused'
+    assert core.db.record(identifier)['status'] == 'queued'
+    core.codex.send_task.assert_not_called()

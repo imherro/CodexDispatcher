@@ -29,6 +29,6 @@ SQLite 与 Codex RPC 不具备分布式原子提交，不能承诺数学意义�
 
 ## 整理模式
 
-默认关闭。专用临时目录、ephemeral Thread、read-only 与 restricted readableRoots；关闭 shell、unified_exec、MCP、apps、多 agent、hooks、web search 等工具入口。配置覆盖只用于整理 runtime，不用于目标 Thread。整理失败不会静默改用别的模型。
+默认关闭。专用临时目录、ephemeral Thread、经 runtime 确认的独立 permission profile；拒绝根目录读取、仅允许临时 workspace 读取，不允许写入或工具网络。关闭 shell、unified_exec、MCP、apps、多 agent、hooks、web search 等入口；覆盖只用于整理 runtime。整理失败不会切换模型。
 
-这些限制须通过实时整理 Spike 进一步验证；若本机运行时拒绝限制配置，整理模式会明确失败，用户可以关闭该模式继续直接派送。
+实时整理已通过，见 [normalizer-result.json](normalizer-result.json)。面对试图让整理器读取 Windows 文件的 Issue，只输出摘要和警告，没有工具事件。旧 readOnly.access 已被 runtime 拒绝；通过公开 request 保留实验字段 activePermissionProfile，未确认预期 profile 时不发送整理 turn。

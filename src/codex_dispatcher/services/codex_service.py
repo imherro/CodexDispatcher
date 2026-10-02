@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import json
+import re
 from pathlib import Path
 import tempfile
 import threading
@@ -12,13 +13,18 @@ import time
 from openai_codex import CodexConfig, JsonRpcError, TransportClosedError
 from openai_codex.client import CodexClient
 from openai_codex.generated.v2_all import ConfigReadResponse, ThreadSourceKind
+from pydantic import RootModel
 
-from codex_dispatcher.domain.models import DispatchError, RecoveryRequired, ThreadBusy, ThreadInfo, same_path
+from codex_dispatcher.domain.models import DispatchError, RecoveryRequired, ThreadBusy, ThreadInfo, WorkerPaused, same_path
 from .security import redact
 
 
 def wire(value):
     return value.model_dump(mode='json', by_alias=True) if hasattr(value, 'model_dump') else value
+
+
+class RawResponse(RootModel[dict]):
+    """Preserve experimental permission provenance omitted from stable SDK types."""
 
 
 @dataclass
@@ -152,7 +158,7 @@ class CodexService:
         return self.validate_thread(thread_id, project_path, allow_mismatch)
 
     def send_task(self, thread_id, task, project_path, *, allow_mismatch=False, model=None,
-                  on_started=lambda tid: None, on_event=lambda event: None, trusted=False):
+                  on_started=lambda tid: None, on_event=lambda event: None, trusted=False, can_send=lambda: True):
         client = self._new_client()
         submitted = False
         terminal = False
@@ -167,6 +173,8 @@ class CodexService:
                 raise DispatchError('Codex 恢复的 Thread ID 与配置不一致')
             self._check_project(resumed['thread'], project_path, allow_mismatch)
             self._check_busy(resumed['thread'])
+            if not can_send():
+                raise WorkerPaused('监视已停止，任务保留在队列中。')
             # Equivalent to official ExternalMessage's wire form. Task is tool authority,
             # never developer instructions. A test message explicitly clicked by the user
             # may use user input; production GitHub tasks always use ExternalMessage.
@@ -284,18 +292,28 @@ class CodexService:
                          'features.multi_agent=false', 'features.hooks=false', 'features.remote_plugin=false',
                          'features.code_mode.enabled=false', 'web_search="disabled"',
                          'project_doc_max_bytes=0', 'features.skill_mcp_dependency_install=false']
+            if cfg.get('sandbox_mode') is not None:
+                raise DispatchError('当前全局 sandbox_mode 与隔离权限配置冲突，请关闭预处理或移除旧配置。')
+            overrides += ['default_permissions="dispatcher-normalize"',
+                          'permissions.dispatcher-normalize={filesystem={":root"="deny", ":workspace_roots"={"."="read"}}, network={enabled=false}}']
             for key in (cfg.get('mcp_servers') or {}):
-                overrides.append('mcp_servers.' + json.dumps(key) + '.enabled=false')
+                if not re.fullmatch(r'[A-Za-z0-9_-]+', key):
+                    raise DispatchError('MCP 名称不支持安全隔离，请关闭任务整理：' + key)
+                overrides.append('mcp_servers.' + key + '.enabled=false')
             for key in (cfg.get('plugins') or {}):
-                overrides.append('plugins.' + json.dumps(key) + '.enabled=false')
+                if '.' in key or '\"' in key:
+                    raise DispatchError('Plugin 名称不支持安全隔离，请关闭任务整理：' + key)
+                overrides.append('plugins.' + key + '.enabled=false')
             config = CodexConfig(codex_bin=self.config.codex_bin, config_overrides=tuple(overrides), cwd=cwd,
-                                 client_name='codex_dispatcher_normalize')
+                                 client_name='codex_dispatcher_normalize', experimental_api=True)
             client = self._new_client(config)
             try:
                 self._bounded(lambda: (client.start(), client.initialize()), on_timeout=client.close)
-                started = wire(self._bounded(lambda: client.thread_start({'cwd': cwd, 'model': model, 'ephemeral': True,
-                    'sandbox': 'read-only', 'approvalPolicy': 'never',
-                    'developerInstructions': 'Only normalize the supplied Issue into JSON. No tools, filesystem, Git, tests, or browsing. Assignment is authoritative. Always dispatch=true.'}), on_timeout=client.close))
+                started = wire(self._bounded(lambda: client.request('thread/start', {'cwd': cwd, 'model': model, 'ephemeral': True,
+                    'approvalPolicy': 'never',
+                    'developerInstructions': 'Only normalize the supplied Issue into JSON. No tools, filesystem, Git, tests, or browsing. Assignment is authoritative. Always dispatch=true.'}, response_model=RawResponse), on_timeout=client.close))
+                if (started.get('activePermissionProfile') or {}).get('id') != 'dispatcher-normalize':
+                    raise DispatchError('Runtime 未确认整理会话的隔离权限，已取消整理。')
                 thread_id = started['thread']['id']
                 schema = {'type': 'object', 'properties': {
                     'dispatch': {'type': 'boolean'}, 'summary': {'type': 'string'},
@@ -305,9 +323,7 @@ class CodexService:
                     'additionalProperties': False}
                 turn = wire(self._bounded(lambda: client.turn_start(thread_id, [], {
                     'toolOutput': {'name': 'github_issue', 'output': json.dumps(issue.to_dict(), ensure_ascii=False)},
-                    'effort': reasoning, 'outputSchema': schema,
-                    'sandboxPolicy': {'type': 'readOnly', 'access': {'type': 'restricted', 'includePlatformDefaults': False,
-                                                                  'readableRoots': [cwd]}}})))
+                    'effort': reasoning, 'outputSchema': schema})))
                 def guard(event):
                     if event['kind'] == 'tool':
                         client.turn_interrupt(thread_id, turn['turn']['id'])

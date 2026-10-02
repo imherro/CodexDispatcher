@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from codex_dispatcher.domain.models import DispatchError, RecoveryRequired, ThreadBusy
+from codex_dispatcher.domain.models import DispatchError, RecoveryRequired, ThreadBusy, WorkerPaused
 from codex_dispatcher.services.codex_service import CodexService
 
 
@@ -92,5 +92,15 @@ def test_known_busy_rejection_safe_to_queue(worker):
     service = CodexService(client_factory=lambda **kw: client)
     with pytest.raises(ThreadBusy):
         service.send_task(worker.target_thread_id, 'task', worker.target_project)
+    assert client.closed
+    assert service.active_threads() == []
+
+
+def test_stop_during_prepare_never_crosses_submit_boundary(worker):
+    client = FakeClient(worker.target_project)
+    service = CodexService(client_factory=lambda **kw: client)
+    with pytest.raises(WorkerPaused):
+        service.send_task(worker.target_thread_id, 'task', worker.target_project, can_send=lambda: False)
+    assert not any(call[0] == 'turn' for call in client.calls)
     assert client.closed
     assert service.active_threads() == []

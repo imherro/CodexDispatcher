@@ -15,6 +15,7 @@ class ThreadQueue:
         self._guard = threading.RLock()
         self._wake = threading.Condition(self._guard)
         self._closing = False
+        self._processing = set()
 
     def allow(self, worker_id, thread_id):
         with self._wake:
@@ -52,7 +53,12 @@ class ThreadQueue:
                     with self._guard:
                         if self._closing or row['worker_id'] not in self._allowed:
                             continue
-                    result = self.dispatch.process_record(row['id'])
+                        self._processing.add(thread_id)
+                    try:
+                        result = self.dispatch.process_record(row['id'], can_send=lambda: self._can_send(row['worker_id']))
+                    finally:
+                        with self._guard:
+                            self._processing.discard(thread_id)
                 if result in ('busy', 'paused', 'blocked'):
                     attempts = self.dispatch.db.record(row['id'])['attempts']
                     with self._wake:
@@ -71,4 +77,9 @@ class ThreadQueue:
         # A running turn is allowed to finish. GUI prevents exit while active.
 
     def running(self):
-        return self.dispatch.codex.active_threads()
+        with self._guard:
+            return list(self._processing | set(self.dispatch.codex.active_threads()))
+
+    def _can_send(self, worker_id):
+        with self._guard:
+            return not self._closing and worker_id in self._allowed
