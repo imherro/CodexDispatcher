@@ -1,0 +1,10 @@
+{
+  "status": "passed",
+  "frozen": true,
+  "gui_initialized": true,
+  "database_initialized": true,
+  "runtime": "codex-cli 0.160.0",
+  "authenticated": true,
+  "model_count": 8,
+  "model_calls": 0
+}

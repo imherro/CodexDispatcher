@@ -10,7 +10,7 @@ Windows 优先的 GitHub Issue → 指定本地 Codex 长期 Thread 派工工具
 
 ## 开始使用
 
-打开 `dist/CodexDispatcher/CodexDispatcher.exe`。分发时保留整个文件夹和 `_internal`，不能只复制 exe。随包包含 Python、Qt 和固定版本 Codex runtime；GitHub CLI、Git 和项目开发工具使用本机安装。
+打开 `dist/CodexDispatcher/CodexDispatcher.exe`，或解压 `dist/CodexDispatcher-0.1.0-windows-x64.zip`。分发时保留整个文件夹和 `_internal`，不能只复制 exe。随包包含 Python、Qt 和固定版本 Codex runtime；GitHub CLI、Git 和项目开发工具使用本机安装。
 
 1. 安装 [GitHub CLI](https://cli.github.com/)，运行 `gh auth login`、`gh auth status`。安装后重新打开终端使 PATH 生效；应用也查找 `C:\Program Files\GitHub CLI\gh.exe`。
 2. 在 Codex Desktop 或 `codex login` 完成本地登录。应用复用本地登录，不保存 PAT、API Key 或 OAuth token。
@@ -72,7 +72,7 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
-默认 pytest 使用 mock/fake GitHub/Codex，不需登录、不使用模型、不修改真实项目。打包脚本先测试再生成 onedir 应用，包含 `codex_cli_bin` 和发行 metadata。
+默认 pytest 使用 mock/fake GitHub/Codex，不需登录、不使用模型、不修改真实项目。打包脚本先测试再生成 onedir 应用与 ZIP，包含 `codex_cli_bin` 和发行 metadata。
 
 明确运行以下实时脚本会消耗额度，最后一个还创建新 label 和两个测试 Issue：
 

@@ -214,7 +214,7 @@ class CodexService:
 
     stream_task = send_task
 
-    def _consume(self, client, turn_id, on_event):
+    def _consume(self, client, turn_id, on_event, on_raw_event=lambda method, payload: None):
         deadline = time.monotonic() + self.turn_timeout
         final, last_message = '', ''
         while True:
@@ -223,6 +223,7 @@ class CodexService:
                 raise RecoveryRequired('会话运行超时，需要恢复检查；应用未终止任务。')
             event = self._bounded(lambda: client.next_turn_notification(turn_id))
             method, payload = event.method, wire(event.payload)
+            on_raw_event(method, payload)
             if method == 'item/completed':
                 item = payload.get('item', {})
                 if item.get('type') == 'agentMessage':
@@ -324,11 +325,14 @@ class CodexService:
                 turn = wire(self._bounded(lambda: client.turn_start(thread_id, [], {
                     'toolOutput': {'name': 'github_issue', 'output': json.dumps(issue.to_dict(), ensure_ascii=False)},
                     'effort': reasoning, 'outputSchema': schema})))
-                def guard(event):
-                    if event['kind'] == 'tool':
+                def guard(method, payload):
+                    if method in ('item/started', 'item/completed') and payload.get('item', {}).get('type') not in (
+                            'userMessage', 'agentMessage', 'reasoning', 'compaction', 'contextCompaction',
+                            'functionCallOutput'):
                         client.turn_interrupt(thread_id, turn['turn']['id'])
-                        raise DispatchError('任务整理模型尝试调用工具，已中断；请关闭预处理后重试')
-                result = self._consume(client, turn['turn']['id'], guard)
+                        raise DispatchError('任务整理模型尝试调用工具（' + str(payload.get('item', {}).get('type')) +
+                                            '），已中断；请关闭预处理后重试')
+                result = self._consume(client, turn['turn']['id'], lambda event: None, guard)
                 if result.status != 'completed':
                     raise DispatchError('任务整理失败：' + result.error)
                 normalized = json.loads(result.final_response)

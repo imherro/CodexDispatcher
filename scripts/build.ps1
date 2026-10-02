@@ -8,5 +8,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed; packaging stopped.' }
     & $pythonExecutable -m PyInstaller --noconfirm CodexDispatcher.spec
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }
+    & $pythonExecutable scripts/package_release.py
+    if ($LASTEXITCODE -ne 0) { throw 'ZIP packaging failed.' }
     Write-Output 'Built dist/CodexDispatcher/CodexDispatcher.exe. Distribute the whole directory.'
 } finally { Pop-Location }

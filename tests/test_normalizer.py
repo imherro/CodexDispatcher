@@ -8,7 +8,8 @@ from codex_dispatcher.services.codex_service import CodexService
 class NormalizeClient:
     def __init__(self, profile='dispatcher-normalize', tool=False):
         self.profile, self.tool, self.turns, self.interrupted, self.closed = profile, tool, [], False, False
-        self.events = iter(([SimpleNamespace(method='item/started', payload={'item':{'type':'commandExecution'}})] if tool else []) + [
+        self.events = iter(([SimpleNamespace(method='item/started', payload={'item':{'type':'commandExecution'}})] if tool else
+                            [SimpleNamespace(method='item/started', payload={'item':{'type':'functionCallOutput'}})]) + [
             SimpleNamespace(method='item/completed', payload={'item':{'type':'agentMessage','text':json.dumps({
                 'dispatch':False,'summary':'summary','requirements':[], 'acceptance_criteria':[], 'warnings':[]})}}),
             SimpleNamespace(method='turn/completed', payload={'turn':{'status':'completed'}})])
@@ -66,3 +67,11 @@ def test_normalizer_tool_attempt_interrupts_and_fails(issue):
         service.normalize(issue, 'dynamic-choice')
     assert client.interrupted
     assert client.closed
+
+
+def test_normalizer_unknown_tool_event_also_fails_closed(issue):
+    service, client, _ = normalizer()
+    client.events = iter([SimpleNamespace(method='item/started', payload={'item':{'type':'futureTool'}})])
+    with pytest.raises(DispatchError, match='工具'):
+        service.normalize(issue, 'dynamic-choice')
+    assert client.interrupted

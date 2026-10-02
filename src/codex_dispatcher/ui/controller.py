@@ -64,7 +64,8 @@ class AppController(QObject):
         history = self.db.history()
         for worker in workers:
             state = runtime.setdefault(worker.id, {})
-            state['status'] = 'Monitoring' if self.monitor and self.monitor.is_monitoring(worker.id) else 'Paused'
+            monitoring = self.monitor and self.monitor.is_monitoring(worker.id)
+            state['status'] = 'Monitoring' if monitoring else 'Error' if state.get('status') == 'Error' else 'Paused'
             records = [r for r in history if r['worker_id'] == worker.id]
             state['queue'] = sum(r['status'] == 'queued' for r in records)
             current = next((r for r in records if r['status'] in ('dispatching','dispatched','recovery_required')), None)
