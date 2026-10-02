@@ -1,0 +1,61 @@
+{
+  "sdk": "0.160.0",
+  "model_test": "passed",
+  "server": "0.160.0 (Windows 10.0.19045; x86_64) dumb (codex_python_sdk; 0.160.0)",
+  "authenticated": true,
+  "models": [
+    "gpt-6.1-sol",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5"
+  ],
+  "project_thread_count": 1,
+  "thread_fields": [
+    "agentNickname",
+    "agentRole",
+    "cliVersion",
+    "createdAt",
+    "cwd",
+    "ephemeral",
+    "forkedFromId",
+    "gitInfo",
+    "historyMode",
+    "id",
+    "model",
+    "modelProvider",
+    "name",
+    "originator",
+    "parentThreadId",
+    "path",
+    "preview",
+    "projectId",
+    "reasoningEffort",
+    "recencyAt",
+    "section",
+    "sectionEnteredAt",
+    "sessionId",
+    "source",
+    "status",
+    "threadSource",
+    "turns",
+    "updatedAt"
+  ],
+  "test_project": "C:\\Users\\kunpeng\\AppData\\Local\\Temp\\codex-dispatcher-spike-0u7oiz_u",
+  "test_thread_id": "01a0fd01-c108-7ed0-9dd7-239caf162ab1",
+  "first_status": "completed",
+  "persisted_cwd": "C:\\Users\\kunpeng\\AppData\\Local\\Temp\\codex-dispatcher-spike-0u7oiz_u",
+  "other_client_status_during_turn": {
+    "type": "notLoaded"
+  },
+  "other_client_turn_statuses": [
+    "completed",
+    "interrupted"
+  ],
+  "second_status": "completed",
+  "context_preserved": true,
+  "same_thread_id": true
+}

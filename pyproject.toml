@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-dispatcher"
+version = "0.1.0"
+description = "Windows desktop GitHub Issue to existing Codex Thread dispatcher"
+requires-python = ">=3.11"
+dependencies = ["openai-codex==0.160.0", "PySide6==6.11.2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=9,<10", "pyinstaller>=6.22,<7"]
+
+[project.scripts]
+codex-dispatcher = "codex_dispatcher.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
