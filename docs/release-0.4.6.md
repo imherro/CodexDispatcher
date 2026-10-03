@@ -9,4 +9,6 @@
 
 140 项测试通过。只读核对 MyVideoCreator #26：两条目标 agent 署名汇报被识别，北京天气请求仍保留；验收未发送通知、未调用模型。
 
+Windows 打包启动、GUI、数据库、内置 runtime、登录状态与桌面桥接配置读取验收通过。
+
 升级前从系统托盘退出旧版，再运行 `dist/v0.4.6/CodexDispatcher/CodexDispatcher.exe`。保留已有配置及历史。
