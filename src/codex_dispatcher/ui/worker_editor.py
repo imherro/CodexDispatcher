@@ -1,5 +1,5 @@
 from dataclasses import replace
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QWidget, QPlainTextEdit
 from codex_dispatcher.domain.models import Worker
 from codex_dispatcher.domain.notification_format import DEFAULT_NOTIFICATION_TEMPLATE
@@ -36,12 +36,17 @@ class WorkerEditor(QWidget):
                 row.addWidget(field, 1)
                 form.addRow(title, row)
             elif key == 'repository':
-                refresh = QPushButton('刷新仓库')
+                self.repository_refresh = refresh = QPushButton('刷新仓库')
                 refresh.clicked.connect(self.refresh_repositories)
                 row = QHBoxLayout()
                 row.addWidget(field, 1)
                 row.addWidget(refresh)
                 form.addRow(title, row)
+                self.repository_status = QLabel()
+                self.repository_status.setTextFormat(Qt.PlainText)
+                self.repository_status.setWordWrap(True)
+                self.repository_status.hide()
+                form.addRow('', self.repository_status)
             elif key == 'target_thread_id':
                 choose = QPushButton('选择会话…')
                 choose.clicked.connect(lambda: self.refresh_threads.emit(''))
@@ -126,6 +131,21 @@ class WorkerEditor(QWidget):
         if current and field.findData(current) == -1:
             field.addItem(current, current)
         field.setCurrentIndex(max(0, field.findData(current)))
+        self.repository_refresh.setEnabled(True)
+        self.repository_status.hide()
+
+    def repositories_loading(self):
+        self.repository_refresh.setEnabled(False)
+        self.repository_status.setStyleSheet('color: #68768a;')
+        self.repository_status.setText('正在读取仓库列表…现有配置仍可编辑。')
+        self.repository_status.show()
+
+    def repository_error(self, error):
+        self.repository_refresh.setEnabled(True)
+        self.repository_status.setStyleSheet('color: #b42318;')
+        self.repository_status.setText('仓库列表刷新失败，可继续编辑已有配置；点击“刷新仓库”重试。\n' + error[-220:])
+        self.repository_status.setToolTip(error)
+        self.repository_status.show()
 
     def collect(self):
         values = {}

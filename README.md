@@ -16,6 +16,8 @@ Windows 桌面通知器：多个 Worker 监测 GitHub 待办，通知对应的 C
 
 每个 Worker 行都有编辑、开始 / 停止监测、立即检查三个图标按钮，悬停显示说明。编辑时从已登录账号可访问的仓库中选择，支持个人、协作和组织仓库，列表可刷新。已有 Worker 保留原分配规则，新 Worker 默认 @ 提及。会话目录和名称自动读取，连接成功显示绿灯。
 
+仓库列表刷新遇到网络错误时，编辑窗口保留原仓库和配置，显示错误并允许重新刷新。通知详情、通知格式及预览使用白底深色文字，支持 Windows 深色系统配色。
+
 关闭窗口可驻留托盘。停止监测只停止后续定时通知，已通知的 agent 继续执行。
 
 ## 三种分配规则
@@ -86,9 +88,11 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.4.0/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
+构建输出为 `dist/v0.4.1/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
 默认测试使用 mock，不消耗真实模型额度，覆盖三种规则、评论去重、旧版迁移、图标按钮、格式验证与预览、桌面回执、持续忙碌排队及不确定发送恢复。
+
+v0.4.1 通过 104 项测试；独立 GUI 验收覆盖三次打开编辑窗口、仓库 EOF 失败与恢复、两次打开通知记录和详情，以及深色系统配色下的完整文本可读性。见 [GUI 验收报告](docs/gui-acceptance-result.json)。这些检查没有发送真实通知或调用模型。
 
 ```powershell
 .venv\Scripts\python.exe scripts/live_mentions.py --run-live

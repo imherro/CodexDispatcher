@@ -88,6 +88,8 @@ class MainWindow(QMainWindow):
             QToolButton#danger { background: #b42318; border-color: #b42318; }
             QToolButton:disabled { background: #eef1f4; border-color: #ced6df; }
             QLineEdit, QComboBox, QSpinBox { background: white; border: 1px solid #ced6df; border-radius: 4px; padding: 6px; }
+            QPlainTextEdit { background: #ffffff; color: #233043; border: 1px solid #ced6df; border-radius: 4px; padding: 6px;
+                             selection-background-color: #176b63; selection-color: #ffffff; }
             QTableWidget { background: white; border: 1px solid #d9e0e8; selection-background-color: #e3f1ee; selection-color: #233043; }
             QHeaderView::section { background: #edf1f5; border: none; padding: 10px; font-weight: 600; }
             QLabel#title { font-size: 23px; font-weight: 600; }
@@ -296,6 +298,9 @@ class MainWindow(QMainWindow):
         dialog.resize(700, 650)
         layout = QVBoxLayout(dialog)
         layout.addWidget(self.editor)
+        # Closing hides the reused editor explicitly; reparenting does not
+        # clear that hidden state when another configuration dialog opens.
+        self.editor.show()
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Save).setText('保存')
         buttons.button(QDialogButtonBox.Cancel).setText('取消')
@@ -314,7 +319,11 @@ class MainWindow(QMainWindow):
         self.refresh_repositories()
 
     def refresh_repositories(self):
-        self.run_job('读取仓库', self.controller.github.list_repositories, self.editor.set_repositories)
+        if '读取仓库' in self.controller._jobs:
+            return
+        self.editor.repositories_loading()
+        self.run_job('读取仓库', self.controller.github.list_repositories, self.editor.set_repositories,
+                     on_error=self.editor.repository_error)
 
     def new_worker(self):
         if self.ready:
@@ -427,6 +436,7 @@ class MainWindow(QMainWindow):
         dialog.resize(1120, 500)
         layout = QVBoxLayout(dialog)
         layout.addWidget(self.history)
+        self.history.show()
         dialog.exec()
         self.history.setParent(None)
         self.history.hide()

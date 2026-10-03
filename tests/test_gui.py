@@ -4,7 +4,8 @@ from dataclasses import replace
 import time
 from unittest.mock import Mock
 import pytest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtGui import QPalette, QColor
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QPlainTextEdit
 from codex_dispatcher.ui.controller import AppController
 from codex_dispatcher.ui.main_window import MainWindow
 from codex_dispatcher.ui.thread_picker import ThreadPicker
@@ -148,5 +149,79 @@ def test_new_worker_defaults_to_mention_and_selectable_repository(app, tmp_path,
     assert '@codex-1070-rc' in window.editor.fields['assignment_value'].placeholderText()
     window.editor_dialog.reject()
     close(app, window)
+
+
+def test_reopening_editor_keeps_form_visible_when_repository_refresh_fails(app, tmp_path, worker, monkeypatch):
+    from codex_dispatcher.domain.models import DispatchError
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *a, **k: pytest.fail('Refresh must not open a blocking dialog'))
+    github, codex = services(worker)
+    github.list_repositories.side_effect = [['owner/repo'], DispatchError('GitHub CLI：EOF'), ['owner/repo','other/repository']]
+    window = MainWindow(AppController(tmp_path / 'reopen.db', github, codex), tray_enabled=False)
+    window.show()
+    wait_until(app, lambda: window.ready and not window.controller._jobs)
+    for opening in range(3):
+        window.open_editor(worker)
+        wait_until(app, lambda: not window.controller._jobs)
+        assert window.editor.isVisible()
+        assert window.editor.fields['name'].isVisible()
+        assert window.editor.fields['notification_template'].isVisible()
+        assert window.editor.fields['name'].text() == worker.name
+        assert window.editor.collect().repository == worker.repository
+        if opening == 1:
+            assert window.editor.repository_status.isVisible()
+            assert 'EOF' in window.editor.repository_status.text()
+            assert window.editor.repository_refresh.isEnabled()
+            window.editor.repository_refresh.click()
+            wait_until(app, lambda: not window.controller._jobs)
+            assert not window.editor.repository_status.isVisible()
+            assert window.editor.fields['repository'].findData('other/repository') >= 0
+            github.list_repositories.side_effect = None
+        window.editor_dialog.reject()
+        assert not window.editor.isVisible()
+    codex.send_task.assert_not_called()
+    close(app, window)
+
+
+def test_dark_system_palette_keeps_complete_notification_and_editor_readable(app, tmp_path, worker, monkeypatch):
+    from codex_dispatcher.ui.history_view import text_dialog
+    previous_palette = app.palette()
+    dark = QPalette(previous_palette)
+    dark.setColor(QPalette.Base, QColor('#101010'))
+    dark.setColor(QPalette.Text, QColor('#f0f0f0'))
+    app.setPalette(dark)
+    github, codex = services(worker)
+    window = MainWindow(AppController(tmp_path / 'contrast.db', github, codex), tray_enabled=False)
+    window.show()
+    wait_until(app, lambda: window.ready and not window.controller._jobs)
+    window.open_editor(worker)
+    wait_until(app, lambda: not window.controller._jobs)
+    for field in (window.editor.fields['notification_template'], window.editor.preview):
+        assert field.palette().color(QPalette.Base).lightness() > 200
+        assert field.palette().color(QPalette.Text).lightness() < 100
+    window.editor_dialog.reject()
+    full_text = '第一行通知\n有分配给你的待办：https://github.com/owner/repo/issues/1\n请自行读取该 Issue。\n执行、验证并完成收尾，及时汇报进度。'
+    observed = []
+    # Inspect the actual widgets without starting nested application event
+    # loops in the shared pytest QApplication. The standalone UI smoke script
+    # also exercises real modal loops in its own process.
+    def inspect_dialog(dialog):
+        dialog.show()
+        editor = dialog.findChild(QPlainTextEdit)
+        if dialog.windowTitle() == '通知记录':
+            observed.append(window.history.isVisible())
+            text_dialog(window.history, '通知详情', full_text)
+        else:
+            observed.append((editor.toPlainText(), editor.palette().color(QPalette.Base).lightness(),
+                             editor.palette().color(QPalette.Text).lightness()))
+        dialog.accept()
+        return QDialog.Accepted
+    monkeypatch.setattr(QDialog, 'exec', inspect_dialog)
+    for _ in range(2):
+        window.show_history()
+    assert observed[0] is True and observed[2] is True
+    for text, background, foreground in (observed[1], observed[3]):
+        assert text == full_text and background > 200 and foreground < 100
+    close(app, window)
+    app.setPalette(previous_palette)
 
 

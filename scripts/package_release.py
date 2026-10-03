@@ -18,13 +18,13 @@ if not executable.is_file():
 shutil.copy2(root / 'README.md', folder / 'README.md')
 docs = folder / 'docs'
 docs.mkdir(exist_ok=True)
-for name in (f'release-{__version__}.md', 'notification-acceptance-result.json', 'mention-acceptance-result.json', 'desktop-bridge-acceptance-result.json', 'packaged-smoke-result.json'):
+for name in (f'release-{__version__}.md', 'notification-acceptance-result.json', 'mention-acceptance-result.json', 'desktop-bridge-acceptance-result.json', 'packaged-smoke-result.json', 'gui-acceptance-result.json'):
     source = root / 'docs' / name
     if source.is_file():
         shutil.copy2(source, docs / name)
 images = docs / 'screenshots'
 images.mkdir(exist_ok=True)
-for name in ('main-window.png', 'worker-config.png'):
+for name in ('main-window.png', 'worker-config.png', 'worker-refresh-error.png', 'notification-detail.png'):
     shutil.copy2(root / 'docs' / 'screenshots' / name, images / name)
 archive = folder.parent / f'CodexDispatcher-{__version__}-windows-x64.zip'
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as output:

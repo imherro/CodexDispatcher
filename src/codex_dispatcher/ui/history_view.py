@@ -1,6 +1,6 @@
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
-                              QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QPlainTextEdit,
+                              QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 
 def text_dialog(parent, title, text):
