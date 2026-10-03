@@ -1,0 +1,23 @@
+{
+  "version": "0.3.0",
+  "status": "passed",
+  "dispatcher_model_calls": 0,
+  "temporary_comments": [
+    5966998361,
+    5967002197
+  ],
+  "repository_picker_verified": true,
+  "same_issue_new_comment_notified": true,
+  "agent_independently_reads_comment": true,
+  "duplicate_agent_turns": 0,
+  "empty_agent_turns": 0,
+  "notification_agent_turns": 2,
+  "setup_agent_turns": 1,
+  "target_thread_id": "01a100c9-4351-7641-ba07-1a442c756869",
+  "project_unchanged": true,
+  "deleted_temporary_comments": [
+    5966998361,
+    5967002197
+  ],
+  "github_writes": 4
+}

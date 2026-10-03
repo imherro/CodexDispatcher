@@ -1,40 +1,58 @@
 # Codex Dispatcher
 
-Windows 桌面通知器：多个 Worker 监测 GitHub 待办 Issue，通知对应的 Codex agent 会话自行读取、执行和收尾。
+Windows 桌面通知器：多个 Worker 监测 GitHub 待办，通知对应的 Codex agent 会话自行读取、执行和收尾。
 
 ![主界面](docs/screenshots/main-window.png)
 
 ## 使用
 
 1. 解压 Windows 包，运行整个目录中的 `CodexDispatcher.exe`。
-2. 确认 GitHub CLI 已安装并通过 `gh auth login` 登录；Codex Desktop / CLI 已登录。
-3. 添加 Worker：填写名称、仓库、Label 或 Assignee 分配规则，选择一个已有 agent 会话。
-4. 点击 **开始监测**。同一个按钮可停止全部监测；启用的 Worker 各自按配置间隔检查。
-5. 关闭窗口可驻留托盘。停止监测只停止后续通知，已通知的 agent 继续执行。
+2. GitHub CLI 通过 `gh auth login` 登录；Codex Desktop / CLI 已登录。
+3. 添加 Worker：填写名称，**从列表选择 GitHub 仓库**，选择已有 agent 会话。
+4. 分配规则默认 **@ 提及**，填写 `codex-1070-rc` 或 `@codex-1070-rc`。
+5. 在该 Worker 行点击 **开始监测**。同一个按钮切换为停止监测；每个 Worker 独立控制。
+6. **立即检查**可以手工立即查询新待办，即使尚未开启持续监测也会通知匹配的 agent。
+7. 每行显示下次检查倒计时；查询时显示“检查中”，停止后显示“—”。手工检查不重置定时计划。
 
-会话目录和名称自动读取，不需要配置模型或填写任务模板。连接成功显示绿灯。通知记录在独立窗口中查看。
+每个 Worker 行都有编辑按钮。编辑时从已登录账号可访问的仓库中选择，支持个人、协作和组织仓库，列表可刷新。已有 Worker 保留原分配规则，新 Worker 默认 @ 提及。会话目录和名称自动读取，连接成功显示绿灯。
 
-## 通知方式
+关闭窗口可驻留托盘。停止监测只停止后续定时通知，已通知的 agent 继续执行。
 
-程序只查询 Issue 编号、状态、Label、Assignee 等元数据，不获取标题、正文、评论。匹配新待办后，发送固定通知与 Issue 地址。agent 自己读取 Issue，并遵循原会话的项目规范、模型和权限处理任务。
+## 三种分配规则
 
-Dispatcher 没有任务整理模型，没有额外的模型判断调用。收到通知后的 **agent 执行仍正常使用模型额度**。
+| 规则 | 分配值示例 | 匹配来源 |
+|---|---|---|
+| **@ 提及（默认）** | `codex-1070-rc` | 打开的 Issue 标题、正文及评论中的 `@codex-1070-rc` |
+| Label | `agent:repair` | Issue 标签 |
+| Assignee | `imherro` | Issue 分配的真实 GitHub 用户 |
 
-空轮询和重复待办不发消息，不连接 Codex 或读取目标项目。每个 Worker 对同一仓库 / Issue 自动通知一次，重启后仍去重；Issue 更新时间变化不会自动重发。通知前会重新核对分配和打开状态。默认跳过 `agent:running`、`agent:done`、`agent:blocked`。
+虚拟 @ 名称不必对应 GitHub 账号。例如评论：
 
-已收到 SDK 回执即记为 **已通知**；这不表示 Issue 已完成。程序不转述 agent 输出、不评价执行结果、不代替 agent 关闭 Issue。运行时在后台保持到该 agent 回合结束，避免关闭连接中断它。多个 Worker 可以绑定不同会话；共享同一会话时通知串行排队。
+> @codex-1070-rc 汇报你的ip地址
+
+Dispatcher 只做文本匹配，给绑定会话发送该评论的链接，让 agent 自己读取和处理。不会把“汇报 IP 地址”转述成指令。完整名称匹配、不区分大小写；不会把更长名称、邮箱或路径中的文本当作点名。
+
+@ 规则每个 Worker 对同一 Issue 的标题 / 正文通知一次，对每条评论各通知一次。**同一 Issue 上的新评论再次点名可以再次触发**，重复轮询、重启以及编辑已通知的原评论都不会自动重发。首次开启会检查已有打开 Issue 中尚未通知的提及。匹配不解析 Markdown，因此引用或代码块中的完整点名也会匹配。
+
+Label / Assignee 每个 Worker 对同一仓库 / Issue 自动通知一次，Issue 更新不会自动重发。所有规则在发送前重新检查状态和分配；默认跳过 `agent:running`、`agent:done`、`agent:blocked`。
+
+## 通知与数据
+
+@ 规则读取文字用于确定是否匹配；Label / Assignee 只查元数据。SQLite 和通知只保存地址、编号等元数据，不保存或转述标题、正文、评论内容。评论通知带 `#issuecomment-ID`，agent 可以定位原文。
+
+Dispatcher 没有任务整理模型，也没有额外模型判断调用。空轮询、重复匹配不发消息，不连接 Codex 或读取目标项目。**agent 收到通知后的执行仍正常使用它自己的模型额度**。
+
+SDK 收到回执即记录“已通知”，不代表 Issue 已完成。agent 遵循原会话项目规范、模型和权限，自行执行、验证、收尾。程序保持后台运行时直到 agent 回合结束，避免关闭连接中断它。共享会话的通知串行排队。
+
+数据保存在 `%APPDATA%\CodexDispatcher`，包括 SQLite 配置、去重记录和滚动日志。v0.1 / v0.2 配置与历史可原地升级，保留原规则及去重记录；旧模型、模板设置不再生效。新版数据库升级为版本 2，升级后使用新版程序。
 
 ## 会话占用
 
-保存配置只读会话元数据，修复了保存时的 active writer 错误。实际唤醒通过官方 SDK 恢复指定会话；如果 Desktop 或其他 Codex 进程仍持有该会话写入权，通知会等待并有限重试。无法强行接管另一个进程，也不能保证能唤醒仍在 Desktop 中打开的会话。
+保存配置只读验证。实际唤醒通过官方 SDK 恢复指定会话；若 Desktop 或其他 Codex 进程仍持有写入权，程序会有限重试。无法抢占另一个进程，不能保证能唤醒仍在 Desktop 中打开的会话。
 
-发送结果不确定时停止自动重发，在“通知记录”中检查原会话并确认；可手动重新通知。通知已确认但运行连接中断时，去重仍保留。已通知的会话或后台操作运行期间，应用会等待结束再退出。
+发送结果不确定时不自动重发，在“通知记录”中检查和确认。已通知的会话或后台操作运行期间，程序等待结束再退出。升级前先退出旧版。
 
-## 数据和升级
-
-数据保存在 `%APPDATA%\CodexDispatcher`，包括 SQLite 配置、去重记录和滚动日志。v0.1 的 Worker 和历史记录可以继续读取；旧模型、模板、路径覆盖、自动更新重发设置不再生效。升级时先退出旧版，然后启动新版。请勿同时运行两个版本使用同一数据目录。
-
-## 开发
+## 开发与验证
 
 Python 3.12、PySide6、官方 `openai-codex==0.160.0`。
 
@@ -46,14 +64,16 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.2.0/CodexDispatcher` 和同目录下的 Windows x64 ZIP。必须分发整个应用目录，SDK runtime 已包含在包内。
+构建输出为 `dist/v0.3.0/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
-测试默认使用 mock，不调用真实模型。59 项测试覆盖静默轮询、元数据查询、恶意正文不转述、多 Worker、通知回执、去重、旧配置、共享会话排队和不确定发送恢复。
-
-显式真实验收：
+默认测试使用 mock，不消耗真实模型额度。81 项测试覆盖三种规则、完整名称、评论分页、评论删除 / 取消提及、逐条评论去重、版本 1 数据迁移、仓库选择、逐 Worker 按钮、手工检查、倒计时及不确定发送恢复。
 
 ```powershell
-.venv\Scripts\python.exe scripts/live_acceptance.py --run-live
+.venv\Scripts\python.exe scripts/live_mentions.py --run-live
 ```
 
-脚本使用已有的两条测试 Issue 和新建的独立只读会话，不修改 GitHub。真实结果见 [通知验收报告](docs/notification-acceptance-result.json)。旧版设计和验收资料留在 docs 中作为历史记录，当前行为以本文为准。
+显式真实验收脚本在已有测试 Issue #1 创建两条临时点名评论，向新的独立只读会话发送链接，验证 agent 自己读取评论、同一 Issue 的新评论可再次通知和重复轮询静默；随后删除其创建的测试评论。结果见 [@ 规则验收报告](docs/mention-acceptance-result.json)。
+
+实现使用官方 [GitHub 评论 API](https://docs.github.com/en/rest/issues/comments) 和 [已登录用户仓库 API](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user)。@ 模式每轮扫描打开的 Issue 和分页评论；大仓库查询可能较慢，打开 Issue 达到 1000 条时明确报错，不静默漏掉候选。
+
+开发同步约定见 [AGENTS.md](AGENTS.md)：每轮修改前拉取远端，完成验证后自动提交、推送。旧版文档留在 docs 作为历史记录，当前行为以本文为准。

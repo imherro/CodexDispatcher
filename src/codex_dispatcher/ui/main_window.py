@@ -39,13 +39,15 @@ class MainWindow(QMainWindow):
         self.callbacks = {}
         self.ready = self._force_close = False
         self._selected_id = None
+        self.worker_actions = {}
         self.editor = WorkerEditor()
         self.editor_dialog = None
         self.editor.refresh_threads.connect(self.refresh_threads)
+        self.editor.refresh_repositories.connect(self.refresh_repositories)
         self.setWindowTitle('Codex Dispatcher v' + __version__)
         self.setWindowIcon(app_icon())
-        self.resize(1060, 570)
-        self.setMinimumSize(850, 440)
+        self.resize(1240, 570)
+        self.setMinimumSize(1080, 440)
         self.setStyleSheet("""
             QMainWindow { background: #f4f6f8; }
             QWidget { font-family: "Segoe UI", "Microsoft YaHei UI", "SimHei"; font-size: 13px; color: #233043; }
@@ -53,6 +55,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover { background: #eaf1f5; }
             QPushButton:disabled { color: #8895a5; background: #eef1f4; }
             QPushButton#primary { background: #176b63; color: white; border-color: #176b63; }
+            QPushButton#primary:disabled, QPushButton#danger:disabled { background: #eef1f4; color: #8895a5; border-color: #ced6df; }
             QPushButton#danger { background: #b42318; color: white; border-color: #b42318; }
             QLineEdit, QComboBox, QSpinBox { background: white; border: 1px solid #ced6df; border-radius: 4px; padding: 6px; }
             QTableWidget { background: white; border: 1px solid #d9e0e8; selection-background-color: #e3f1ee; selection-color: #233043; }
@@ -84,8 +87,6 @@ class MainWindow(QMainWindow):
         self.action_buttons = {}
         for key, label, callback in (
             ('new', '+ 添加 Worker', self.new_worker),
-            ('edit', '编辑', self.edit_selected),
-            ('monitor', '开始监测', self.toggle_monitoring),
         ):
             button = QPushButton(label)
             button.clicked.connect(callback)
@@ -96,14 +97,14 @@ class MainWindow(QMainWindow):
         self.summary = QLabel('0 个 Worker')
         toolbar.addWidget(self.summary)
         layout.addLayout(toolbar)
-        self.worker_table = QTableWidget(0, 5)
-        self.worker_table.setHorizontalHeaderLabels(['Worker / 仓库', '分配规则', 'Agent 会话', '监测状态', '最近通知'])
+        self.worker_table = QTableWidget(0, 7)
+        self.worker_table.setHorizontalHeaderLabels(['Worker / 仓库', '分配规则', 'Agent 会话', '监测状态', '下次检查', '最近通知', '操作'])
         self.worker_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.worker_table.setSelectionMode(QTableWidget.SingleSelection)
         self.worker_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.worker_table.verticalHeader().hide()
         self.worker_table.horizontalHeader().setStretchLastSection(True)
-        for col, width in enumerate((250, 170, 210, 100)):
+        for col, width in enumerate((205, 140, 165, 80, 85, 125, 290)):
             self.worker_table.setColumnWidth(col, width)
         self.worker_table.itemSelectionChanged.connect(self.select_worker)
         self.worker_table.doubleClicked.connect(self.edit_selected)
@@ -126,13 +127,13 @@ class MainWindow(QMainWindow):
         controller.finished.connect(self.finish_job)
         controller.event.connect(self.receive_event)
         self.timer = QTimer(self)
-        self.timer.setInterval(2000)
+        self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh_snapshot)
         self.tray = None
         if tray_enabled and QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(self.windowIcon(), self)
             menu = QMenu()
-            for label, callback in (('打开', self.open_window), ('开始 / 停止监测', self.toggle_monitoring), ('退出', self.quit_app)):
+            for label, callback in (('打开', self.open_window), ('退出', self.quit_app)):
                 action = QAction(label, self)
                 action.triggered.connect(callback)
                 menu.addAction(action)
@@ -151,10 +152,12 @@ class MainWindow(QMainWindow):
     def run_job(self, name, function, callback=None, on_error=None):
         if self.controller.submit(name, function):
             self.callbacks[name] = (callback, on_error)
-            self.update_monitor_button()
+            self.update_worker_actions()
 
     def finish_job(self, name, value, error):
         self.controller.acknowledge(name)
+        if self.controller.closing:
+            return
         callback, on_error = self.callbacks.pop(name, (None, None))
         if error:
             self.statusBar().showMessage(error[:180])
@@ -176,12 +179,18 @@ class MainWindow(QMainWindow):
             self.apply_snapshot(value)
         elif callback:
             callback(value)
-        if name in ('save', 'start', 'stop', 'redispatch', 'recovery', 'mark_handled'):
+        if name in ('save', 'redispatch', 'recovery', 'mark_handled') or name.startswith(('start:', 'stop:', 'check:')):
             self.refresh_snapshot()
-        self.update_monitor_button()
+        self.update_worker_actions()
 
     def refresh_snapshot(self):
         if self.ready:
+            # Countdown stays live even if other network jobs occupy the UI pool.
+            for row, worker in enumerate(self.workers):
+                seconds = self.controller.monitor.countdown(worker.id)
+                item = self.worker_table.item(row, 4)
+                if item:
+                    item.setText('—' if seconds is None else '检查中…' if seconds == 0 else f'{seconds // 60:02d}:{seconds % 60:02d}')
             self.controller.submit('snapshot', self.controller.snapshot)
 
     def apply_snapshot(self, snapshot):
@@ -200,23 +209,42 @@ class MainWindow(QMainWindow):
                 result = f"#{last['issue_number']} · {status}"
                 if last['status'] == 'notified' and last['error'] and not last['finished_at']:
                     result += ' · 待确认'
-            values = [worker.name + '\n' + worker.repository, worker.assignment_mode + ': ' + worker.assignment_value,
-                      worker.target_thread_name or worker.target_thread_id, state, result]
+            seconds = self.runtime.get(worker.id, {}).get('countdown')
+            countdown = '—' if seconds is None else '检查中…' if seconds == 0 else f'{seconds // 60:02d}:{seconds % 60:02d}'
+            rule = '@' + worker.assignment_value.removeprefix('@') if worker.assignment_mode == 'mention' else worker.assignment_mode + ': ' + worker.assignment_value
+            values = [worker.name + '\n' + worker.repository, rule,
+                      worker.target_thread_name or worker.target_thread_id, state, countdown, result]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                item.setToolTip(worker.target_thread_id if col == 2 else value if col != 4 or not last else value + '\n' + (last['error'] or last['dispatch_time'] or ''))
+                item.setToolTip(worker.target_thread_id if col == 2 else value if col != 5 or not last else value + '\n' + (last['error'] or last['dispatch_time'] or ''))
                 self.worker_table.setItem(row, col, item)
+            if worker.id not in self.worker_actions:
+                panel = QWidget()
+                buttons = {}
+                actions = QHBoxLayout(panel)
+                actions.setContentsMargins(5, 6, 5, 6)
+                actions.setSpacing(5)
+                for key, label, callback in (('edit', '编辑', self.edit_worker),
+                                             ('monitor', '开始监测', self.toggle_worker),
+                                             ('check', '立即检查', self.check_worker)):
+                    button = QPushButton(label)
+                    button.setStyleSheet('padding: 7px 9px;')
+                    button.clicked.connect(lambda checked=False, wid=worker.id, action=callback: action(wid))
+                    buttons[key] = button
+                    actions.addWidget(button)
+                buttons['check'].setToolTip('立即查询并通知新的待办；无需开启持续监测。')
+                self.worker_actions[worker.id] = buttons
+                self.worker_table.setCellWidget(row, 6, panel)
             self.worker_table.setRowHeight(row, 60)
             if worker.id == self._selected_id:
                 self.worker_table.selectRow(row)
         self.worker_table.blockSignals(False)
-        self.action_buttons['edit'].setEnabled(self.ready and bool(self.workers))
         self.summary.setText(f'{len(self.workers)} 个 Worker · {sum(self.controller.monitor.is_monitoring(w.id) for w in self.workers)} 个监测中')
         self.empty_hint.setVisible(not self.workers)
         self.history.set_records(self.records)
         if self.workers and not self._selected_id:
             self.worker_table.selectRow(0)
-        self.update_monitor_button()
+        self.update_worker_actions()
 
     def select_worker(self):
         row = self.worker_table.currentRow()
@@ -248,6 +276,10 @@ class MainWindow(QMainWindow):
         self.editor_dialog = dialog
         dialog.setModal(True)
         dialog.show()
+        self.refresh_repositories()
+
+    def refresh_repositories(self):
+        self.run_job('读取仓库', self.controller.github.list_repositories, self.editor.set_repositories)
 
     def new_worker(self):
         if self.ready:
@@ -303,42 +335,52 @@ class MainWindow(QMainWindow):
                 widget.setToolTip(error)
         self.run_job('检查连接', check, apply)
 
-    def update_monitor_button(self):
-        button = self.action_buttons['monitor']
-        monitoring = self.ready and any(self.controller.monitor.is_monitoring(w.id) for w in self.workers)
-        pending = self.controller._jobs & {'start', 'stop'}
-        button.setText('正在开始…' if 'start' in pending else '正在停止…' if 'stop' in pending else '停止监测' if monitoring else '开始监测')
-        button.setEnabled(self.ready and bool(self.workers) and not pending)
-        style = 'danger' if monitoring else 'primary'
-        if button.objectName() != style:
-            button.setObjectName(style)
-            button.style().unpolish(button)
-            button.style().polish(button)
+    def worker(self, identifier):
+        return next((w for w in self.workers if w.id == identifier), None)
 
-    def toggle_monitoring(self):
-        if not self.ready:
+    def edit_worker(self, identifier):
+        worker = self.worker(identifier)
+        if worker:
+            self.open_editor(worker)
+
+    def update_worker_actions(self):
+        for worker in self.workers:
+            buttons = self.worker_actions.get(worker.id)
+            if not buttons:
+                continue
+            monitoring = self.ready and self.controller.monitor.is_monitoring(worker.id)
+            starting = 'start:' + worker.id in self.controller._jobs
+            stopping = 'stop:' + worker.id in self.controller._jobs
+            checking = 'check:' + worker.id in self.controller._jobs
+            button = buttons['monitor']
+            button.setText('正在开始…' if starting else '正在停止…' if stopping else '停止监测' if monitoring else '开始监测')
+            button.setEnabled(self.ready and worker.enabled and not starting and not stopping)
+            buttons['edit'].setEnabled(self.ready and not starting and not stopping and not checking)
+            buttons['check'].setText('检查中…' if checking else '立即检查')
+            buttons['check'].setEnabled(self.ready and worker.enabled and not checking and not starting and not stopping)
+            style = 'danger' if monitoring else 'primary'
+            if button.objectName() != style:
+                button.setObjectName(style)
+                button.style().unpolish(button)
+                button.style().polish(button)
+
+    def toggle_worker(self, identifier):
+        worker = self.worker(identifier)
+        if not self.ready or not worker:
             return
-        if any(self.controller.monitor.is_monitoring(w.id) for w in self.workers):
-            self.stop_all()
+        if self.controller.monitor.is_monitoring(identifier):
+            self.run_job('stop:' + identifier, lambda: self.controller.monitor.stop(identifier))
         else:
-            self.start_all()
-
-    def start_all(self):
-        def start():
-            enabled = [w for w in self.workers if w.enabled]
-            if not enabled:
-                raise ValueError('请先启用至少一个 Worker')
-            for worker in enabled:
+            def start():
                 self.controller.dispatch.test_configuration(worker)
                 self.controller.db.save_worker(worker)
-            for worker in enabled:
                 self.controller.monitor.start(worker)
-        if self.ready:
-            self.run_job('start', start)
+            self.run_job('start:' + identifier, start)
 
-    def stop_all(self):
-        if self.ready:
-            self.run_job('stop', lambda: [self.controller.monitor.stop(w.id) for w in self.workers])
+    def check_worker(self, identifier):
+        worker = self.worker(identifier)
+        if self.ready and worker and worker.enabled:
+            self.run_job('check:' + identifier, lambda: self.controller.monitor.check_now(worker))
 
     def show_history(self):
         dialog = QDialog(self)

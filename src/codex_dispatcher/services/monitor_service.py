@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import math
 
 from codex_dispatcher.domain.models import now
 from .security import redact
@@ -12,6 +13,7 @@ class MonitorService:
         self.dispatch, self.queue, self.emit = dispatch, queue, emit
         self._workers = {}
         self._checks = {}
+        self._next_checks = {}
         self._guard = threading.RLock()
         self._closed = False
 
@@ -25,6 +27,7 @@ class MonitorService:
                 return
             stop = threading.Event()
             self._workers[worker.id] = stop
+            self._next_checks[worker.id] = time.monotonic()
             self.queue.allow(worker.id, worker.target_thread_id)
             threading.Thread(target=self._loop, args=(worker, stop), daemon=True,
                              name='monitor-' + worker.name).start()
@@ -45,7 +48,16 @@ class MonitorService:
                     self.dispatch.db.set_runtime(worker.id, {'status': 'Error', 'last_result': redact(str(exc))})
                     break
                 delay = min(worker.poll_interval * 60 * 2 ** (failures - 1), 3600)
+            with self._guard:
+                if self._workers.get(worker.id) is stop:
+                    self._next_checks[worker.id] = time.monotonic() + delay
             stop.wait(delay)
+
+    def countdown(self, worker_id):
+        with self._guard:
+            if worker_id not in self._workers:
+                return None
+            return max(0, math.ceil(self._next_checks.get(worker_id, time.monotonic()) - time.monotonic()))
 
     def check_now(self, worker, *, stop=None):
         with self._guard:
@@ -73,6 +85,7 @@ class MonitorService:
     def stop(self, worker_id):
         with self._guard:
             stop = self._workers.pop(worker_id, None)
+            self._next_checks.pop(worker_id, None)
         if stop:
             stop.set()
         self.queue.pause(worker_id)

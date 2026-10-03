@@ -6,6 +6,7 @@ from codex_dispatcher.domain.models import Worker
 
 class WorkerEditor(QWidget):
     refresh_threads = Signal(str)
+    refresh_repositories = Signal()
 
     def __init__(self):
         super().__init__()
@@ -18,16 +19,26 @@ class WorkerEditor(QWidget):
             ('assignment_value', '分配规则', '例如：agent:repair 或 GitHub 用户名'),
             ('target_thread_id', 'Agent 会话', '选择会话，或粘贴 Thread ID'),
         ):
-            field = QLineEdit()
-            field.setPlaceholderText(placeholder)
+            field = QComboBox() if key == 'repository' else QLineEdit()
+            if key != 'repository':
+                field.setPlaceholderText(placeholder)
             self.fields[key] = field
             if key == 'assignment_value':
                 self.fields['assignment_mode'] = combo = QComboBox()
+                combo.addItem('@ 提及', 'mention')
                 combo.addItem('Label', 'label')
                 combo.addItem('Assignee', 'assignee')
+                combo.currentIndexChanged.connect(self.update_assignment_hint)
                 row = QHBoxLayout()
                 row.addWidget(combo)
                 row.addWidget(field, 1)
+                form.addRow(title, row)
+            elif key == 'repository':
+                refresh = QPushButton('刷新仓库')
+                refresh.clicked.connect(self.refresh_repositories)
+                row = QHBoxLayout()
+                row.addWidget(field, 1)
+                row.addWidget(refresh)
                 form.addRow(title, row)
             elif key == 'target_thread_id':
                 choose = QPushButton('选择会话…')
@@ -56,9 +67,30 @@ class WorkerEditor(QWidget):
             elif isinstance(field, QSpinBox):
                 field.setValue(value)
             elif isinstance(field, QComboBox):
+                if key == 'repository' and field.findData(value) == -1:
+                    field.addItem(value or '请选择 GitHub 仓库', value)
                 field.setCurrentIndex(field.findData(value))
             else:
                 field.setText(value)
+        self.update_assignment_hint()
+
+    def update_assignment_hint(self):
+        field = self.fields.get('assignment_value')
+        if field:
+            mode = self.fields['assignment_mode'].currentData()
+            field.setPlaceholderText({'mention':'例如：@codex-1070-rc（可省略 @）',
+                                      'label':'例如：agent:repair', 'assignee':'GitHub 用户名，例如 imherro'}.get(mode, ''))
+
+    def set_repositories(self, repositories):
+        field = self.fields['repository']
+        current = field.currentData() or ''
+        field.clear()
+        field.addItem('请选择 GitHub 仓库', '')
+        for repository in repositories:
+            field.addItem(repository, repository)
+        if current and field.findData(current) == -1:
+            field.addItem(current, current)
+        field.setCurrentIndex(max(0, field.findData(current)))
 
     def collect(self):
         values = {}

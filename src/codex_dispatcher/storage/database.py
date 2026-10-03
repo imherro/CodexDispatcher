@@ -23,7 +23,7 @@ class Database:
             if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
                 raise DispatchError('SQLite 检查失败。请先备份数据库，再恢复备份；应用不会自动删除数据。')
             db.execute('PRAGMA journal_mode=WAL')
-            if db.execute('PRAGMA user_version').fetchone()[0] > 1:
+            if db.execute('PRAGMA user_version').fetchone()[0] > 2:
                 raise DispatchError('数据库版本高于当前程序，请使用较新版 Codex Dispatcher')
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS workers (
@@ -46,8 +46,13 @@ class Database:
                 CREATE INDEX IF NOT EXISTS records_queue ON dispatch_records(target_thread_id, status, discovered_at);
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS runtime_state (worker_id TEXT PRIMARY KEY, value TEXT NOT NULL);
-                PRAGMA user_version=1;
             ''')
+            # Migrate in place; older records retain their per-Issue deduplication.
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(dispatch_records)')}
+            if 'notification_key' not in columns:
+                db.execute("ALTER TABLE dispatch_records ADD COLUMN notification_key TEXT NOT NULL DEFAULT 'issue'")
+            db.execute('CREATE INDEX IF NOT EXISTS records_notification ON dispatch_records(worker_id, repository, issue_number, notification_key)')
+            db.execute('PRAGMA user_version=2')
 
     @contextmanager
     def connection(self):
@@ -86,13 +91,11 @@ class Database:
 
     @staticmethod
     def _eligible(db, worker, issue):
-        rows = db.execute('''SELECT status, issue_updated_at FROM dispatch_records
-                             WHERE worker_id=? AND repository=? COLLATE NOCASE AND issue_number=?''',
-                          (worker.id, issue.repository, issue.number)).fetchall()
+        rows = db.execute('''SELECT 1 FROM dispatch_records
+                             WHERE worker_id=? AND repository=? COLLATE NOCASE AND issue_number=? AND notification_key=?''',
+                          (worker.id, issue.repository, issue.number, issue.notification_key)).fetchall()
         if not rows:
             return True
-        if any(r['status'] in ('discovered', 'queued', 'dispatching', 'dispatched', 'recovery_required') for r in rows):
-            return False
         # Failure and ignored rows also require explicit retry; a poll never loops on failure.
         return False
 
@@ -102,20 +105,20 @@ class Database:
             if not force and not self._eligible(db, worker, issue):
                 return None
             if force and db.execute('''SELECT 1 FROM dispatch_records WHERE worker_id=?
-                    AND repository=? COLLATE NOCASE AND issue_number=?
+                    AND repository=? COLLATE NOCASE AND issue_number=? AND notification_key=?
                     AND (status IN ('discovered','queued','dispatching','dispatched','recovery_required')
                          OR (status='notified' AND finished_at IS NULL))''',
-                    (worker.id, issue.repository, issue.number)).fetchone():
+                    (worker.id, issue.repository, issue.number, issue.notification_key)).fetchone():
                 raise DispatchError('任务仍在排队、运行或等待恢复检查。请先检查或标记已处理，再重新派送。')
             identifier = str(uuid.uuid4())
             db.execute('''INSERT INTO dispatch_records
                 (id,worker_id,repository,issue_number,issue_updated_at,target_thread_id,status,
-                 discovered_at,worker_snapshot,issue_snapshot)
-                VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                 discovered_at,worker_snapshot,issue_snapshot,notification_key)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
                 (identifier, worker.id, issue.repository, issue.number, issue.updated_at,
                  worker.target_thread_id, 'queued', now(),
                  json.dumps(worker.to_dict(), ensure_ascii=False),
-                 json.dumps(issue.metadata(), ensure_ascii=False)))
+                 json.dumps(issue.metadata(), ensure_ascii=False), issue.notification_key))
             return identifier
 
     def update_record(self, identifier, **changes):

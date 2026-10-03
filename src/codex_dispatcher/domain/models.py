@@ -35,13 +35,26 @@ def normalize_repository(value: str) -> str:
     return value
 
 
+def normalize_mention(value: str) -> str:
+    value = value.strip().removeprefix('@')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', value):
+        raise ValueError('@ 名称只能包含字母、数字、下划线和连字符，长度 1–64')
+    return value
+
+
+def contains_mention(text: str, value: str) -> bool:
+    name = normalize_mention(value)
+    return re.search(r'(?<![A-Za-z0-9_@/.-])@' + re.escape(name) + r'(?![A-Za-z0-9_-])',
+                     text or '', re.IGNORECASE) is not None
+
+
 @dataclass
 class Worker:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ''
     enabled: bool = True
     repository: str = ''
-    assignment_mode: str = 'label'
+    assignment_mode: str = 'mention'
     assignment_value: str = ''
     target_project: str = ''
     target_thread_id: str = ''
@@ -58,8 +71,10 @@ class Worker:
             setattr(self, key, getattr(self, key).strip())
             if not getattr(self, key):
                 raise ValueError(f'{key} 不能为空')
-        if self.assignment_mode not in ('label', 'assignee'):
+        if self.assignment_mode not in ('mention', 'label', 'assignee'):
             raise ValueError('分配模式无效')
+        if self.assignment_mode == 'mention':
+            self.assignment_value = normalize_mention(self.assignment_value)
         if not 1 <= self.poll_interval <= 60:
             raise ValueError('检查间隔必须为 1–60 分钟')
         if not self.target_project or not Path(self.target_project).is_dir():
@@ -88,10 +103,13 @@ class Issue:
     assignees: list[str] = field(default_factory=list)
     comments: list[dict] = field(default_factory=list)
     state: str = 'OPEN'
+    notification_key: str = 'issue'
+    comment_id: int | None = None
 
     @classmethod
-    def from_github(cls, repository, data):
-        return cls(repository, data['number'], '', '',
+    def from_github(cls, repository, data, *, include_content=False):
+        return cls(repository, data['number'], data.get('title') or '' if include_content else '',
+                   data.get('body') or '' if include_content else '',
                    data['url'], data['updatedAt'],
                    [x['name'] for x in data.get('labels', [])],
                    [x['login'] for x in data.get('assignees', [])],
@@ -106,6 +124,8 @@ class Issue:
             return False
         if {x.casefold() for x in self.labels} & {x.casefold() for x in worker.ignored_labels}:
             return False
+        if worker.assignment_mode == 'mention':
+            return contains_mention(self.title + '\n' + self.body, worker.assignment_value)
         values = self.labels if worker.assignment_mode == 'label' else self.assignees
         return worker.assignment_value.casefold() in {x.casefold() for x in values}
 

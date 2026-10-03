@@ -40,6 +40,14 @@ class DispatchService:
                 self.emit({'kind': 'discovered', 'worker_id': worker.id, 'text': f'发现 Issue #{issue.number}，已排队'})
         return identifiers
 
+    def _read_source(self, worker, number, notification_key):
+        if worker.assignment_mode != 'mention':
+            return self.github.get_issue(worker.repository, number)
+        comment_id = None
+        if notification_key.startswith('mention:comment:'):
+            comment_id = int(notification_key.rsplit(':', 1)[1])
+        return self.github.get_issue(worker.repository, number, mention=True, comment_id=comment_id)
+
     def process_record(self, identifier, can_send=lambda: True):
         record = self.db.record(identifier)
         if not record or not self.db.claim(identifier):
@@ -47,7 +55,7 @@ class DispatchService:
         worker = Worker.from_dict(json.loads(record['worker_snapshot']))
         try:
             # Re-read assignment immediately before delivery; label/assignee may have changed while queued.
-            issue = self.github.get_issue(record['repository'], record['issue_number'])
+            issue = self._read_source(worker, record['issue_number'], record['notification_key'])
             if not issue.matches(worker):
                 self.db.update_record(identifier, status='ignored', finished_at=now(), error='Issue 已关闭、取消分配或有忽略标签')
                 return 'ignored'
@@ -57,7 +65,7 @@ class DispatchService:
             worker.validate()
             if not can_send():
                 raise WorkerPaused('监视已停止，任务保留在队列中。')
-            prompt = build_notification(worker.repository, issue.number, identifier)
+            prompt = build_notification(worker.repository, issue.number, identifier, comment_id=issue.comment_id)
             self.db.update_record(identifier, prompt=prompt, issue_updated_at=issue.updated_at,
                                   issue_snapshot=json.dumps(issue.metadata(), ensure_ascii=False))
             def started(turn_id):
@@ -109,7 +117,7 @@ class DispatchService:
         worker = self.db.get_worker(record['worker_id'])
         if not worker or not worker.enabled:
             raise DispatchError('请先启用此 Worker')
-        issue = self.github.get_issue(worker.repository, record['issue_number'])
+        issue = self._read_source(worker, record['issue_number'], record['notification_key'])
         if not issue.matches(worker):
             raise DispatchError('Issue 已不符合当前分配规则，不能重新派送')
         return self.db.reserve(worker, issue, force=True)

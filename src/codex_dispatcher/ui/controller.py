@@ -31,10 +31,12 @@ class AppController(QObject):
         self._jobs.add(name)
         future = self.pool.submit(function)
         def complete(f):
+            if self.closing or f.cancelled():
+                return
             try:
                 self.finished.emit(name, f.result(), None)
             except Exception as exc:
-                self.finished.emit(name, None, redact(str(exc)))
+                self.finished.emit(name, None, redact(str(exc) or type(exc).__name__))
         future.add_done_callback(complete)
         return True
 
@@ -65,6 +67,7 @@ class AppController(QObject):
         for worker in workers:
             state = runtime.setdefault(worker.id, {})
             monitoring = self.monitor and self.monitor.is_monitoring(worker.id)
+            state['countdown'] = self.monitor.countdown(worker.id) if self.monitor else None
             state['status'] = 'Monitoring' if monitoring else 'Error' if state.get('status') == 'Error' else 'Paused'
             records = [r for r in history if r['worker_id'] == worker.id]
             state['queue'] = sum(r['status'] == 'queued' for r in records)

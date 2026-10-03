@@ -47,7 +47,7 @@ def main():
     codex = CountedCodex(config=config)
     try:
         github.test_repository(args.repository)
-        worker = Worker(name='通知验收 agent', repository=args.repository, assignment_value=args.label,
+        worker = Worker(name='通知验收 agent', repository=args.repository, assignment_mode='label', assignment_value=args.label,
                         target_project=str(project))
         issues = github.list_assigned_issues(worker)
         assert len(issues) == 2, 'Expected the two existing isolated acceptance Issues'

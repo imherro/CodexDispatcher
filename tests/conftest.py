@@ -12,7 +12,7 @@ from codex_dispatcher.services.dispatch_service import DispatchService
 
 @pytest.fixture
 def worker(tmp_path):
-    return Worker(name='Test / worker-1', repository='owner/repo',
+    return Worker(name='Test / worker-1', repository='owner/repo', assignment_mode='label',
                   assignment_value='agent:worker-1', target_project=str(tmp_path), target_thread_id='existing-thread-ABC')
 
 
