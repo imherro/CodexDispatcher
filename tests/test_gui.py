@@ -47,9 +47,20 @@ def test_small_editor_save_metadata_only_and_no_stream(app, tmp_path, worker, mo
     window.show()
     wait_until(app, lambda: window.ready)
     window.editor.load(worker)
+    template = '{notification_id}\n请处理 {issue_url}，完成后关闭 Issue。'
+    window.editor.fields['notification_template'].setPlainText(template)
+    assert window.editor.collect().notification_template == template
+    assert 'https://github.com/owner/repo/issues/1' in window.editor.preview.toPlainText()
+    assert window.editor.dirty()
+    window.editor.load(window.editor.collect())
+    assert not window.editor.dirty()
+    window.editor.fields['notification_template'].setPlainText('{body}')
+    assert '格式错误' in window.editor.preview.toPlainText()
+    window.editor.fields['notification_template'].setPlainText(template)
     window.save_worker()
     wait_until(app, lambda: len(window.workers) == 1)
     assert window.workers[0].target_project == worker.target_project
+    assert window.workers[0].notification_template == template
     assert set(window.action_buttons) == {'new'}
     assert set(window.worker_actions[worker.id]) == {'edit', 'monitor', 'check'}
     assert set(window.editor.fields) == {'name','repository','assignment_mode','assignment_value','target_thread_id','enabled','poll_interval','notification_template'}
@@ -139,16 +150,3 @@ def test_new_worker_defaults_to_mention_and_selectable_repository(app, tmp_path,
     close(app, window)
 
 
-def test_notification_format_editor_preview_and_roundtrip(app, worker):
-    from codex_dispatcher.ui.worker_editor import WorkerEditor
-    editor = WorkerEditor()
-    editor.load(worker)
-    template = '{notification_id}\n请处理 {issue_url}，完成后关闭 Issue。'
-    editor.fields['notification_template'].setPlainText(template)
-    assert editor.collect().notification_template == template
-    assert 'https://github.com/owner/repo/issues/1' in editor.preview.toPlainText()
-    assert editor.dirty()
-    editor.load(editor.collect())
-    assert not editor.dirty()
-    editor.fields['notification_template'].setPlainText('{body}')
-    assert '格式错误' in editor.preview.toPlainText()

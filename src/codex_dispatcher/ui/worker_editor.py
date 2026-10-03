@@ -144,3 +144,11 @@ class WorkerEditor(QWidget):
 
     def dirty(self):
         return self.collect().to_dict() != self.worker.to_dict()
+
+    def dispose(self):
+        # Combo/text fields can emit while Qt tears down their internal models.
+        # Disable preview callbacks before any sibling widget is destroyed.
+        for field in self.fields.values():
+            field.blockSignals(True)
+        self.preview.blockSignals(True)
+        self.deleteLater()

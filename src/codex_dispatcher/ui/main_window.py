@@ -484,7 +484,7 @@ class MainWindow(QMainWindow):
         self.controller.shutdown()
         if self.tray:
             self.tray.hide()
-        self.editor.deleteLater()
+        self.editor.dispose()
         self.history.deleteLater()
         event.accept()
         QApplication.instance().quit()
