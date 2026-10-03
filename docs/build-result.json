@@ -1,7 +1,7 @@
 {
-  "version": "0.4.0",
-  "executable_sha256": "ad0cae39bd40901ed784aaeff7bdfb289befec5ffe432512520c8058b275b72b",
-  "archive_sha256": "2776379241c298d4beb3430f0411ec6aa797733d638662dee734328ae2743934",
-  "archive_bytes": 203488537,
-  "folder_bytes": 563790492
+  "version": "0.4.1",
+  "executable_sha256": "63752018ed2838686696faa2254458c97d71be35574ec3d76ed3d4a94c02f0da",
+  "archive_sha256": "2458d80effef8689e41844156e80d30784b505897e5be0b5d1f171f1b9ddff1d",
+  "archive_bytes": 203622295,
+  "folder_bytes": 563928404
 }
