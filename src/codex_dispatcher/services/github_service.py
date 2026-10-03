@@ -48,7 +48,7 @@ class GitHubService:
         for attempt in range(3 if retry else 1):
             try:
                 result = self.runner([executable, *args], capture_output=True, text=True,
-                                     encoding='utf-8', errors='replace', timeout=max(.1, deadline - time.monotonic()), env=env,
+                                     encoding='utf-8', errors='replace', timeout=min(45, max(.1, deadline - time.monotonic())), env=env,
                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             except subprocess.TimeoutExpired:
                 error = 'GitHub 请求超时'

@@ -9,7 +9,7 @@ import json
 from unittest.mock import Mock
 
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
-from PySide6.QtGui import QFontDatabase, QPalette, QColor
+from PySide6.QtGui import QFontDatabase, QPalette, QColor, QPixmap, QPainter
 from PySide6.QtCore import QTimer
 
 from codex_dispatcher.domain.models import Worker, DispatchError
@@ -55,6 +55,46 @@ def main():
         window.apply_snapshot(controller.snapshot())
         output = Path('docs/screenshots')
         output.mkdir(parents=True, exist_ok=True)
+        # Use the real animation timer with a fake tray sink in headless QA.
+        # Closing to tray must leave animation running; the last stopped
+        # Worker must restore the static icon and stop the timer.
+        tray_icons = []
+        window.tray = Mock()
+        window.tray.setIcon.side_effect = lambda icon: tray_icons.append(icon.cacheKey())
+        window.update_tray()
+        assert window.tray_animation.isActive()
+        assert '1 个 Worker' in window.tray.setToolTip.call_args.args[0]
+        window.close()
+        assert not window.isVisible() and window.tray_animation.isActive()
+        deadline = time.monotonic() + 3
+        while len(set(tray_icons)) < 3 and time.monotonic() < deadline:
+            application.processEvents()
+            time.sleep(.02)
+        assert len(set(tray_icons)) >= 3
+        second = controller.db.get_worker('worker-two')
+        controller.monitor.start(second)
+        window.update_tray()
+        assert '2 个 Worker' in window.tray.setToolTip.call_args.args[0]
+        controller.monitor.stop(worker.id)
+        window.update_tray()
+        assert window.tray_animation.isActive()
+        controller.monitor.stop(second.id)
+        window.update_tray()
+        assert not window.tray_animation.isActive()
+        assert tray_icons[-1] == window.windowIcon().cacheKey()
+        # Inspect both enlarged and native-size frames using Qt alone.
+        sheet = QPixmap(13 * 64, 96)
+        sheet.fill(QColor('#f4f6f8'))
+        painter = QPainter(sheet)
+        for index, icon in enumerate([window.windowIcon(), *window._tray_frames]):
+            painter.drawPixmap(index * 64, 0, icon.pixmap(64, 64))
+            painter.drawPixmap(index * 64 + 24, 76, icon.pixmap(16, 16))
+        painter.end()
+        assert sheet.save(str(output / 'tray-animation-frames.png'))
+        window.tray = None
+        controller.monitor.start(worker)
+        window.show()
+        application.processEvents()
         assert window.grab().save(str(output / 'main-window.png'))
         window.edit_worker('worker-two')
         while controller._jobs:
@@ -123,7 +163,8 @@ def main():
         report = {'version': __version__, 'status': 'passed', 'dark_system_palette': True,
                   'editor_openings': 3, 'repository_eof_preserves_configuration': True,
                   'repository_refresh_recovery': True, 'history_and_details_openings': 2,
-                  'complete_notification_readable': True, 'model_calls': 0}
+                  'complete_notification_readable': True, 'tray_animation_while_hidden': True,
+                  'tray_animation_multi_worker_and_stop': True, 'model_calls': 0}
         Path('docs/gui-acceptance-result.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
         print('GUI rendered successfully with fake services; 0 live Codex calls.')
 

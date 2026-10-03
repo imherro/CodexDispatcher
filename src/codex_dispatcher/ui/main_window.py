@@ -15,7 +15,7 @@ from .thread_picker import ThreadPicker
 from .worker_editor import WorkerEditor
 
 
-def app_icon():
+def app_icon(monitoring_frame=None):
     pixmap = QPixmap(64, 64)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
@@ -29,6 +29,12 @@ def app_icon():
     font.setPixelSize(38)
     painter.setFont(font)
     painter.drawText(pixmap.rect(), Qt.AlignCenter, 'D')
+    if monitoring_frame is not None:
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor('#2b8c7c'), 4))
+        painter.drawEllipse(7, 7, 50, 50)
+        painter.setPen(QPen(QColor('#a7f3d0'), 5, Qt.SolidLine, Qt.RoundCap))
+        painter.drawArc(7, 7, 50, 50, (90 - monitoring_frame * 30) * 16, 100 * 16)
     painter.end()
     return QIcon(pixmap)
 
@@ -164,6 +170,12 @@ class MainWindow(QMainWindow):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.refresh_snapshot)
         self.tray = None
+        self._tray_frames = []
+        self._tray_frame = 0
+        self._tray_monitoring_count = None
+        self.tray_animation = QTimer(self)
+        self.tray_animation.setInterval(150)
+        self.tray_animation.timeout.connect(self.advance_tray_icon)
         if tray_enabled and QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(self.windowIcon(), self)
             menu = QMenu()
@@ -177,6 +189,31 @@ class MainWindow(QMainWindow):
             self.tray.show()
         self.statusBar().showMessage('正在加载配置…')
         controller.initialize()
+
+    def update_tray(self):
+        if not self.tray:
+            self.tray_animation.stop()
+            return
+        count = sum(self.controller.monitor.is_monitoring(w.id) for w in self.workers) if self.ready else 0
+        if count == self._tray_monitoring_count:
+            return
+        self._tray_monitoring_count = count
+        self.tray.setToolTip(f'Codex Dispatcher · {count} 个 Worker 正在监测' if count else 'Codex Dispatcher · 监测已停止')
+        if count:
+            if not self._tray_frames:
+                self._tray_frames = [app_icon(frame) for frame in range(12)]
+            if not self.tray_animation.isActive():
+                self._tray_frame = 0
+                self.advance_tray_icon()
+                self.tray_animation.start()
+        else:
+            self.tray_animation.stop()
+            self.tray.setIcon(self.windowIcon())
+
+    def advance_tray_icon(self):
+        if self.tray and self._tray_frames:
+            self.tray.setIcon(self._tray_frames[self._tray_frame])
+            self._tray_frame = (self._tray_frame + 1) % len(self._tray_frames)
 
     @staticmethod
     def set_connection_status(widget, name, status):
@@ -289,6 +326,7 @@ class MainWindow(QMainWindow):
         if self.workers and not self._selected_id:
             self.worker_table.selectRow(0)
         self.update_worker_actions()
+        self.update_tray()
 
     def select_worker(self):
         row = self.worker_table.currentRow()
@@ -478,6 +516,8 @@ class MainWindow(QMainWindow):
         if event.get('kind') in ('message', 'tool', 'status', 'checked'):
             return
         text = event.get('text', '')
+        if event.get('kind') in ('monitoring', 'paused'):
+            self.update_tray()
         self.statusBar().showMessage(text[:180])
         if self.tray and event.get('kind') == 'error':
             self.tray.showMessage('Codex Dispatcher', text[:180], QSystemTrayIcon.Warning)
@@ -509,6 +549,7 @@ class MainWindow(QMainWindow):
             self.quit_app()
             return
         self.timer.stop()
+        self.tray_animation.stop()
         self.controller.shutdown()
         if self.tray:
             self.tray.hide()

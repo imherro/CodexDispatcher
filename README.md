@@ -22,6 +22,8 @@ Windows 桌面通知器：多个 Worker 监测 GitHub 待办，通知对应的 C
 
 关闭窗口可驻留托盘。停止监测只停止后续定时通知，已通知的 agent 继续执行。
 
+有 Worker 正在监测时，右下角系统托盘的 D 图标显示旋转光环，悬停可查看监测数量；窗口隐藏后动画继续。全部 Worker 停止监测后恢复静态图标。
+
 ## 三种分配规则
 
 | 规则 | 分配值示例 | 匹配来源 |
@@ -90,7 +92,7 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.4.4/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
+构建输出为 `dist/v0.4.5/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
 默认测试使用 mock，不消耗真实模型额度，覆盖三种规则、评论去重、旧版迁移、图标按钮、格式验证与预览、桌面回执、持续忙碌排队及不确定发送恢复。
 

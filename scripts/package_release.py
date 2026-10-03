@@ -24,7 +24,7 @@ for name in (f'release-{__version__}.md', 'notification-acceptance-result.json',
         shutil.copy2(source, docs / name)
 images = docs / 'screenshots'
 images.mkdir(exist_ok=True)
-for name in ('main-window.png', 'worker-config.png', 'worker-refresh-error.png', 'notification-detail.png'):
+for name in ('main-window.png', 'worker-config.png', 'worker-refresh-error.png', 'notification-detail.png', 'tray-animation-frames.png'):
     shutil.copy2(root / 'docs' / 'screenshots' / name, images / name)
 archive = folder.parent / f'CodexDispatcher-{__version__}-windows-x64.zip'
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as output:

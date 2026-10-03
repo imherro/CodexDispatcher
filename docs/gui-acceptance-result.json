@@ -1,5 +1,5 @@
 {
-  "version": "0.4.4",
+  "version": "0.4.5",
   "status": "passed",
   "dark_system_palette": true,
   "editor_openings": 3,
@@ -7,5 +7,7 @@
   "repository_refresh_recovery": true,
   "history_and_details_openings": 2,
   "complete_notification_readable": true,
+  "tray_animation_while_hidden": true,
+  "tray_animation_multi_worker_and_stop": true,
   "model_calls": 0
 }
