@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 import threading
 import time
@@ -13,6 +14,27 @@ from openai_codex.generated.v2_all import ThreadSourceKind
 
 from codex_dispatcher.domain.models import DispatchError, RecoveryRequired, ThreadBusy, ThreadInfo, WorkerPaused, same_path
 from .security import redact
+
+
+def routing_timeout(error):
+    return 'workspace routing discovery timed out' in str(error).casefold()
+
+
+def retry_routing_read(action):
+    """Retry only read-only operations after this specific discovery failure."""
+    @wraps(action)
+    def read(*args, **kwargs):
+        for attempt in range(3):
+            try:
+                return action(*args, **kwargs)
+            except DispatchError as exc:
+                if not routing_timeout(exc):
+                    raise
+                if attempt == 2:
+                    raise ThreadBusy('Codex 暂时无法定位会话，已重试 3 次。请稍后重试；待发送通知会保留在队列中。',
+                                     keep_queued=True) from exc
+                time.sleep(.25 * (attempt + 1))
+    return read
 
 
 def wire(value):
@@ -89,6 +111,7 @@ class CodexService:
         finally:
             client.close()  # reader clients have never started a turn
 
+    @retry_routing_read
     def check_connection(self):
         with self._reader() as client:
             account = wire(self._bounded(client.account_read, on_timeout=client.close))
@@ -96,6 +119,7 @@ class CodexService:
                 raise DispatchError('Codex 未登录，请在 Codex Desktop 或 codex login 中完成登录')
             return True
 
+    @retry_routing_read
     def list_threads(self, project_path=None):
         with self._reader() as client:
             params = {'limit': 100, 'sourceKinds': [x.value for x in ThreadSourceKind], 'sortKey': 'updated_at'}
@@ -115,6 +139,7 @@ class CodexService:
             # Also defend against server versions that accept but ignore cwd filtering.
             return [t for t in result if not project_path or same_path(t.cwd, project_path)]
 
+    @retry_routing_read
     def read_thread(self, thread_id, *, include_turns=False):
         with self._reader() as client:
             return wire(self._bounded(lambda: client.thread_read(thread_id, include_turns=include_turns), on_timeout=client.close))['thread']
@@ -135,6 +160,8 @@ class CodexService:
     @staticmethod
     def _rpc_error(exc):
         message = exc.message.casefold()
+        if routing_timeout(exc):
+            return ThreadBusy('Codex 暂时无法定位会话，通知已排队，稍后自动重试。', keep_queued=True)
         if any(marker in message for marker in ('active writer', 'another writer')):
             return ThreadBusy('目标会话的写入权由 Codex 桌面应用或其他进程持有，空闲时也可能被占用。'
                               '请启用桌面桥接，向原应用发送通知。')

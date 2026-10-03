@@ -1,9 +1,43 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 from codex_dispatcher.domain.models import DispatchError, RecoveryRequired, ThreadBusy, WorkerPaused
 from codex_dispatcher.services.codex_service import CodexService
+
+
+@pytest.mark.parametrize('stage', ['initialize', 'thread_read'])
+def test_metadata_routing_timeout_retries_read_only(worker, monkeypatch, stage):
+    from openai_codex import JsonRpcError
+    monkeypatch.setattr('codex_dispatcher.services.codex_service.time.sleep', lambda _: None)
+    first, second = FakeClient(worker.target_project), FakeClient(worker.target_project)
+    setattr(first, stage, Mock(side_effect=JsonRpcError(-32603, 'workspace routing discovery timed out')))
+    factory = Mock(side_effect=[first, second])
+    result = CodexService(client_factory=factory).read_thread(worker.target_thread_id)
+    assert result['id'] == worker.target_thread_id and factory.call_count == 2
+    assert first.closed and second.closed
+    assert not any(call[0] in ('turn', 'resume') for client in (first, second) for call in client.calls)
+
+
+def test_persistent_routing_timeout_has_bounded_retry_and_keeps_queue(worker, monkeypatch):
+    from openai_codex import JsonRpcError
+    monkeypatch.setattr('codex_dispatcher.services.codex_service.time.sleep', lambda _: None)
+    client = FakeClient(worker.target_project)
+    client.thread_read = Mock(side_effect=JsonRpcError(-32603, 'workspace routing discovery timed out'))
+    with pytest.raises(ThreadBusy) as caught:
+        CodexService(client_factory=lambda **kw: client).read_thread(worker.target_thread_id)
+    assert caught.value.keep_queued and client.thread_read.call_count == 3
+    assert client.closed
+
+
+def test_metadata_missing_thread_does_not_retry(worker):
+    from openai_codex import JsonRpcError
+    client = FakeClient(worker.target_project)
+    client.thread_read = Mock(side_effect=JsonRpcError(-32600, 'thread not found'))
+    with pytest.raises(DispatchError):
+        CodexService(client_factory=lambda **kw: client).read_thread(worker.target_thread_id)
+    assert client.thread_read.call_count == 1
 
 
 class FakeClient:

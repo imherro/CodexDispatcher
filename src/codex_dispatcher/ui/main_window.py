@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+import logging
 from PySide6.QtCore import Qt, QTimer, QPointF, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap, QPen, QPolygonF
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QHBoxLayout,
@@ -192,6 +193,7 @@ class MainWindow(QMainWindow):
             return
         callback, on_error = self.callbacks.pop(name, (None, None))
         if error:
+            logging.getLogger('codex_dispatcher').error('%s: %s', name, error)
             self.statusBar().showMessage(error[:180])
             if on_error:
                 on_error(error)

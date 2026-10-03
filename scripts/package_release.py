@@ -18,7 +18,7 @@ if not executable.is_file():
 shutil.copy2(root / 'README.md', folder / 'README.md')
 docs = folder / 'docs'
 docs.mkdir(exist_ok=True)
-for name in (f'release-{__version__}.md', 'notification-acceptance-result.json', 'mention-acceptance-result.json', 'desktop-bridge-acceptance-result.json', 'packaged-smoke-result.json', 'gui-acceptance-result.json'):
+for name in (f'release-{__version__}.md', 'notification-acceptance-result.json', 'mention-acceptance-result.json', 'desktop-bridge-acceptance-result.json', 'packaged-smoke-result.json', 'gui-acceptance-result.json', 'routing-acceptance-result.json'):
     source = root / 'docs' / name
     if source.is_file():
         shutil.copy2(source, docs / name)

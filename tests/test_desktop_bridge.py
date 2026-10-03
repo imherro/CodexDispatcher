@@ -37,6 +37,40 @@ def test_idle_desktop_thread_receives_followup_without_resume(worker):
     sdk.interrupt.assert_not_called()
 
 
+def test_desktop_configuration_reads_owner_without_sdk_routing(worker):
+    service, sdk, request = adapter(worker)
+    sdk.read_thread.side_effect = DispatchError('workspace routing discovery timed out')
+    data = service.read_thread(worker.target_thread_id)
+    assert data['id'] == worker.target_thread_id and data['cwd'] == worker.target_project
+    sdk.read_thread.assert_not_called()
+    assert request.call_args.args[1]['tool'] == 'read_thread'
+
+
+def test_routing_failure_before_delivery_stays_queued_and_then_delivers_once(core, worker, monkeypatch):
+    monkeypatch.setattr('codex_dispatcher.services.codex_service.time.sleep', lambda _: None)
+    service, _, request = adapter(worker)
+    original_reply = request.side_effect
+    request.side_effect = DispatchError('workspace routing discovery timed out')
+    core.service.codex = service
+    identifier = core.service.discover(worker)[0]
+    for _ in range(7):
+        assert core.service.process_record(identifier) == 'busy'
+    assert core.db.record(identifier)['status'] == 'queued'
+    assert all(call.args[1]['tool'] == 'read_thread' for call in request.call_args_list)
+    request.side_effect = original_reply
+    assert core.service.process_record(identifier) == 'notified'
+    assert len([call for call in request.call_args_list if call.args[1]['tool'] == 'send_message_to_thread']) == 1
+
+
+def test_routing_text_in_uncertain_send_error_never_retries(worker, monkeypatch):
+    monkeypatch.setattr('codex_dispatcher.services.codex_service.time.sleep', lambda _: None)
+    response = {'success': False, 'contentItems': [{'type': 'inputText', 'text': 'workspace routing discovery timed out'}]}
+    service, _, request = adapter(worker, response)
+    with pytest.raises(RecoveryRequired):
+        service.send_task(worker.target_thread_id, 'notification', worker.target_project, trusted=True)
+    assert request.call_count == 2
+
+
 @pytest.mark.parametrize('response', [
     {'success': True, 'contentItems': [{'type': 'inputText', 'text': '{"threadId":"different"}'}]},
     {'success': True, 'contentItems': []},

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-dispatcher"
-version = "0.4.1"
+version = "0.4.2"
 description = "Windows desktop GitHub Issue to existing Codex Thread dispatcher"
 requires-python = ">=3.11"
 dependencies = ["openai-codex==0.160.0", "PySide6==6.11.2"]

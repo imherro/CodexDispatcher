@@ -14,7 +14,7 @@ import time
 import uuid
 
 from codex_dispatcher.domain.models import DispatchError, RecoveryRequired, ThreadBusy, WorkerPaused, same_path
-from .codex_service import CodexService, RunResult
+from .codex_service import CodexService, RunResult, retry_routing_read
 
 MAX_FRAME = 8 * 1024 * 1024
 
@@ -175,9 +175,19 @@ class DesktopCodexService:
         except Exception as exc:
             raise error_type('桌面应用未返回有效回执；发送请求不会自动重发。') from exc
 
+    @retry_routing_read
     def read_desktop_thread(self, thread_id):
         return self.app_tool('read_thread', {'threadId': thread_id, 'hostId': 'local',
                                             'turnLimit': 1, 'includeOutputs': False})
+
+    def read_thread(self, thread_id, *, include_turns=False):
+        if include_turns:
+            return self.sdk.read_thread(thread_id, include_turns=True)
+        # Validate through the same desktop owner that will receive delivery.
+        # A second SDK app-server need not rediscover this workspace route.
+        data = dict(self.read_desktop_thread(thread_id)['thread'])
+        data['name'] = data.get('name') or data.get('title') or ''
+        return data
 
     def send_task(self, thread_id, prompt, project_path, *, trusted=False,
                   on_started=lambda turn_id: None, can_send=lambda: True, **kwargs):

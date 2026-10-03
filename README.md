@@ -88,11 +88,13 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.4.1/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
+构建输出为 `dist/v0.4.2/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
 默认测试使用 mock，不消耗真实模型额度，覆盖三种规则、评论去重、旧版迁移、图标按钮、格式验证与预览、桌面回执、持续忙碌排队及不确定发送恢复。
 
 v0.4.1 通过 104 项测试；独立 GUI 验收覆盖三次打开编辑窗口、仓库 EOF 失败与恢复、两次打开通知记录和详情，以及深色系统配色下的完整文本可读性。见 [GUI 验收报告](docs/gui-acceptance-result.json)。这些检查没有发送真实通知或调用模型。
+
+v0.4.2 通过 111 项测试。桌面模式验证会话时直接读取原桌面应用；SDK 只读操作遇到 `workspace routing discovery timed out` 时最多尝试三次。派送前持续出现该超时，通知保留在队列中等待恢复；发送结果不确定时仍需人工确认，不自动重发。界面操作失败的日志包含操作名称，便于定位。
 
 ```powershell
 .venv\Scripts\python.exe scripts/live_mentions.py --run-live
