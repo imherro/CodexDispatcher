@@ -343,8 +343,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, '暂不能修改', '请先停止监测，并等待已通知会话结束、处理待确认记录。')
             return
         def save():
-            self.controller.dispatch.validate_worker(worker)
-            self.controller.github.test_repository(worker.repository)
+            existing = self.controller.db.get_worker(worker.id)
+            if existing and existing.target_thread_id == worker.target_thread_id:
+                worker.target_project = existing.target_project
+                worker.target_thread_name = existing.target_thread_name
+                worker.validate()
+            else:
+                self.controller.dispatch.validate_worker(worker)
             self.controller.db.save_worker(worker)
             return worker
         def saved(value):

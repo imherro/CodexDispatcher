@@ -6,6 +6,7 @@ import math
 
 from codex_dispatcher.domain.models import now
 from .security import redact
+from .github_service import GitHubUnavailable
 
 
 class MonitorService:
@@ -43,11 +44,11 @@ class MonitorService:
             except Exception as exc:
                 failures += 1
                 self.emit({'kind': 'error', 'worker_id': worker.id, 'text': redact(str(exc))})
-                if failures >= 5:
+                if failures >= 5 and not isinstance(exc, GitHubUnavailable):
                     self.stop(worker.id)
                     self.dispatch.db.set_runtime(worker.id, {'status': 'Error', 'last_result': redact(str(exc))})
                     break
-                delay = min(worker.poll_interval * 60 * 2 ** (failures - 1), 3600)
+                delay = min(worker.poll_interval * 60 * 2 ** min(failures - 1, 6), 3600)
             with self._guard:
                 if self._workers.get(worker.id) is stop:
                     self._next_checks[worker.id] = time.monotonic() + delay

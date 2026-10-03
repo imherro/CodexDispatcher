@@ -5,12 +5,18 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import re
+import time
 import webbrowser
 from dataclasses import replace
 from urllib.parse import urlparse
 
 from codex_dispatcher.domain.models import DispatchError, Issue, Worker, normalize_repository
 from .security import redact
+
+
+class GitHubUnavailable(DispatchError):
+    """A read-only query failed temporarily; a queued notice can safely wait."""
 
 
 def resolve_gh() -> str:
@@ -31,21 +37,38 @@ class GitHubService:
         self.executable = executable
         self.runner = runner
 
-    def _run(self, args, *, parse=True):
+    def _query(self, args, *, parse=True):
+        return self._run(args, parse=parse, retry=True)
+
+    def _run(self, args, *, parse=True, retry=False):
         executable = self.executable or resolve_gh()
         env = os.environ.copy()
         env['GH_PROMPT_DISABLED'] = '1'
-        try:
-            result = self.runner([executable, *args], capture_output=True, text=True,
-                                 encoding='utf-8', errors='replace', timeout=45, env=env,
-                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise DispatchError(redact(f'GitHub 查询失败：{exc}')) from exc
-        if result.returncode:
-            error = redact(result.stderr or result.stdout)
+        deadline = time.monotonic() + 45
+        for attempt in range(3 if retry else 1):
+            try:
+                result = self.runner([executable, *args], capture_output=True, text=True,
+                                     encoding='utf-8', errors='replace', timeout=max(.1, deadline - time.monotonic()), env=env,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            except subprocess.TimeoutExpired:
+                error = 'GitHub 请求超时'
+                transient = True
+            except OSError as exc:
+                raise DispatchError(redact(f'GitHub 查询失败：{exc}')) from exc
+            else:
+                if not result.returncode:
+                    break
+                error = redact(result.stderr or result.stdout)
+                transient = bool(re.search(r'\beof\b|connection reset|broken pipe|timed out|timeout|'
+                                           r'temporary failure|http (502|503|504)\b', error, re.IGNORECASE))
             if 'rate limit' in error.casefold():
                 raise DispatchError('GitHub rate limit：本轮已停止，请稍后重试。' + error[:400])
-            raise DispatchError('GitHub CLI：' + error[:800])
+            if not retry or not transient:
+                raise DispatchError('GitHub CLI：' + error[:800])
+            delay = .5 * (attempt + 1)
+            if attempt == 2 or time.monotonic() + delay >= deadline:
+                raise GitHubUnavailable('GitHub 暂时连接失败，已自动重试；请稍后再试。' + error[:400])
+            time.sleep(delay)
         if not parse:
             return True
         try:
@@ -54,17 +77,17 @@ class GitHubService:
             raise DispatchError('GitHub CLI 返回的 JSON 无效') from exc
 
     def check_auth(self):
-        return self._run(['auth', 'status', '--hostname', 'github.com'], parse=False)
+        return self._query(['auth', 'status', '--hostname', 'github.com'], parse=False)
 
     def test_repository(self, repository):
         repository = normalize_repository(repository)
         self.check_auth()
-        repo = self._run(['repo', 'view', repository, '--json', 'nameWithOwner'])
-        self._run(['issue', 'list', '--repo', repository, '--state', 'open', '--limit', '1', '--json', 'number'])
+        repo = self._query(['repo', 'view', repository, '--json', 'nameWithOwner'])
+        self._query(['issue', 'list', '--repo', repository, '--state', 'open', '--limit', '1', '--json', 'number'])
         return repo['nameWithOwner']
 
     def list_repositories(self):
-        pages = self._run(['api', '--paginate', '--slurp',
+        pages = self._query(['api', '--paginate', '--slurp',
                           'user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member'])
         return sorted({normalize_repository(row['full_name']) for page in pages for row in page}, key=str.casefold)
 
@@ -74,7 +97,7 @@ class GitHubService:
             return self._list_mentions(worker, repository)
         flag = '--label' if worker.assignment_mode == 'label' else '--assignee'
         # gh paginates up to this bound; surface saturation rather than silently losing backlog.
-        data = self._run(['issue', 'list', '--repo', repository, '--state', 'open',
+        data = self._query(['issue', 'list', '--repo', repository, '--state', 'open',
                           flag, worker.assignment_value, '--limit', '1000', '--json',
                           'number,url,updatedAt,labels,assignees,state'])
         if len(data) >= 1000:
@@ -100,7 +123,7 @@ class GitHubService:
 
     def _list_mentions(self, worker, repository):
         # Literal matching supports virtual names that are not GitHub accounts.
-        rows = self._run(['issue', 'list', '--repo', repository, '--state', 'open', '--limit', '1000',
+        rows = self._query(['issue', 'list', '--repo', repository, '--state', 'open', '--limit', '1000',
                           '--json', 'number,title,body,url,updatedAt,labels,assignees,state'])
         if len(rows) >= 1000:
             raise DispatchError('@ 规则的打开 Issue 达到 1000 条上限，请缩小仓库范围')
@@ -112,7 +135,7 @@ class GitHubService:
                 result.append(candidate)
         if issues:
             # gh handles every REST page; comments on PRs / closed Issues are excluded.
-            pages = self._run(['api', '--paginate', '--slurp',
+            pages = self._query(['api', '--paginate', '--slurp',
                               f'repos/{repository}/issues/comments?per_page=100'])
             for page in pages:
                 for comment in page:
@@ -128,7 +151,7 @@ class GitHubService:
         fields = 'number,url,updatedAt,labels,assignees,state'
         if mention:
             fields += ',title,body'
-        data = self._run(['issue', 'view', str(int(number)), '--repo', repository, '--json',
+        data = self._query(['issue', 'view', str(int(number)), '--repo', repository, '--json',
                           fields])
         issue = Issue.from_github(repository, data, include_content=mention)
         if not mention:
@@ -138,7 +161,7 @@ class GitHubService:
             if type(comment_id) is not int or comment_id < 1:
                 raise ValueError('评论编号无效')
             try:
-                comment = self._run(['api', f'repos/{repository}/issues/comments/{comment_id}'])
+                comment = self._query(['api', f'repos/{repository}/issues/comments/{comment_id}'])
             except DispatchError as exc:
                 if 'HTTP 404' not in str(exc):
                     raise

@@ -68,6 +68,20 @@ def test_small_editor_save_metadata_only_and_no_stream(app, tmp_path, worker, mo
     assert '#16803c' in window.codex_status.text()
     codex.send_task.assert_not_called()
     codex.read_thread.assert_called_once_with(worker.target_thread_id)
+    github.test_repository.assert_not_called()
+    # Existing notification-format edits remain saveable while both services
+    # are unavailable. Choosing another target still requires validation.
+    from codex_dispatcher.domain.models import DispatchError
+    github.test_repository.side_effect = DispatchError('GitHub EOF')
+    codex.read_thread.side_effect = DispatchError('workspace routing discovery timed out')
+    codex.check_connection.side_effect = DispatchError('offline')
+    updated_template = template + '\n及时汇报进度。'
+    window.editor.fields['notification_template'].setPlainText(updated_template)
+    window.save_worker()
+    wait_until(app, lambda: window.workers[0].notification_template == updated_template)
+    assert window.controller.db.get_worker(worker.id).notification_template == updated_template
+    assert codex.read_thread.call_count == 1
+    github.test_repository.assert_not_called()
     previous = window.statusBar().currentMessage()
     window.receive_event({'kind':'message', 'text':'unwanted agent output'})
     assert window.statusBar().currentMessage() == previous

@@ -18,6 +18,8 @@ Windows 桌面通知器：多个 Worker 监测 GitHub 待办，通知对应的 C
 
 仓库列表刷新遇到网络错误时，编辑窗口保留原仓库和配置，显示错误并允许重新刷新。通知详情、通知格式及预览使用白底深色文字，支持 Windows 深色系统配色。
 
+编辑已有 Worker 且未更换 Agent 会话时，保存只做本机校验，不依赖 GitHub 或 Codex 联网。新建或更换会话时仍读取并验证目标会话；GitHub 仓库可访问性在开始监测时检查。GitHub 只读查询遇到 EOF、超时、连接重置或 HTTP 502/503/504 时最多尝试三次，共用 45 秒时间预算。持续断网时监测退避重试、待发送通知保留，恢复后继续。
+
 关闭窗口可驻留托盘。停止监测只停止后续定时通知，已通知的 agent 继续执行。
 
 ## 三种分配规则
@@ -88,13 +90,15 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.4.2/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
+构建输出为 `dist/v0.4.3/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
 默认测试使用 mock，不消耗真实模型额度，覆盖三种规则、评论去重、旧版迁移、图标按钮、格式验证与预览、桌面回执、持续忙碌排队及不确定发送恢复。
 
 v0.4.1 通过 104 项测试；独立 GUI 验收覆盖三次打开编辑窗口、仓库 EOF 失败与恢复、两次打开通知记录和详情，以及深色系统配色下的完整文本可读性。见 [GUI 验收报告](docs/gui-acceptance-result.json)。这些检查没有发送真实通知或调用模型。
 
 v0.4.2 通过 111 项测试。桌面模式验证会话时直接读取原桌面应用；SDK 只读操作遇到 `workspace routing discovery timed out` 时最多尝试三次。派送前持续出现该超时，通知保留在队列中等待恢复；发送结果不确定时仍需人工确认，不自动重发。界面操作失败的日志包含操作名称，便于定位。
+
+v0.4.3 通过 121 项测试，新增已有配置离线保存、GitHub 查询临时失败恢复、重试上限、鉴权错误不重试、写操作不重试，以及持续断网后队列与监测恢复检查。
 
 ```powershell
 .venv\Scripts\python.exe scripts/live_mentions.py --run-live

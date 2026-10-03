@@ -5,6 +5,7 @@ import json
 from codex_dispatcher.domain.models import DispatchError, Issue, RecoveryRequired, ThreadBusy, Worker, WorkerPaused, now
 from .notification_service import build_notification
 from .security import redact
+from .github_service import GitHubUnavailable
 
 
 class DispatchService:
@@ -84,9 +85,10 @@ class DispatchService:
         except WorkerPaused as exc:
             self.db.update_record(identifier, status='queued', error=str(exc))
             return 'paused'
-        except ThreadBusy as exc:
+        except (ThreadBusy, GitHubUnavailable) as exc:
             attempts = record['attempts'] + 1
-            status = 'queued' if exc.keep_queued or attempts < 6 else 'failed'
+            keep_queued = isinstance(exc, GitHubUnavailable) or exc.keep_queued
+            status = 'queued' if keep_queued or attempts < 6 else 'failed'
             self.db.update_record(identifier, status=status, attempts=attempts, error=str(exc),
                                   **({'finished_at': now()} if status == 'failed' else {}))
             if record['error'] != str(exc) or status == 'failed':
