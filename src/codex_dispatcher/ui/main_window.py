@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from datetime import datetime
 import logging
 from PySide6.QtCore import Qt, QTimer, QPointF, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap, QPen, QPolygonF
@@ -224,7 +225,7 @@ class MainWindow(QMainWindow):
                 seconds = self.controller.monitor.countdown(worker.id)
                 item = self.worker_table.item(row, 4)
                 if item:
-                    item.setText('—' if seconds is None else '检查中…' if seconds == 0 else f'{seconds // 60:02d}:{seconds % 60:02d}')
+                    item.setText('检查中…' if 'check:' + worker.id in self.controller._jobs or seconds == 0 else '—' if seconds is None else f'{seconds // 60:02d}:{seconds % 60:02d}')
             self.controller.submit('snapshot', self.controller.snapshot)
 
     def apply_snapshot(self, snapshot):
@@ -244,7 +245,7 @@ class MainWindow(QMainWindow):
                 if last['status'] == 'notified' and last['error'] and not last['finished_at']:
                     result += ' · 待确认'
             seconds = self.runtime.get(worker.id, {}).get('countdown')
-            countdown = '—' if seconds is None else '检查中…' if seconds == 0 else f'{seconds // 60:02d}:{seconds % 60:02d}'
+            countdown = '检查中…' if 'check:' + worker.id in self.controller._jobs or seconds == 0 else '—' if seconds is None else f'{seconds // 60:02d}:{seconds % 60:02d}'
             rule = '@' + worker.assignment_value.removeprefix('@') if worker.assignment_mode == 'mention' else worker.assignment_mode + ': ' + worker.assignment_value
             values = [worker.name + '\n' + worker.repository, rule,
                       worker.target_thread_name or worker.target_thread_id, state, countdown, result]
@@ -252,6 +253,10 @@ class MainWindow(QMainWindow):
                 item = QTableWidgetItem(value)
                 item.setToolTip(worker.target_thread_id if col == 2 else value if col != 5 or not last else value + '\n' + (last['error'] or last['dispatch_time'] or ''))
                 self.worker_table.setItem(row, col, item)
+            check_state = self.runtime.get(worker.id, {})
+            if check_state.get('last_check'):
+                checked_at = datetime.fromisoformat(check_state['last_check']).astimezone().strftime('%H:%M:%S')
+                self.worker_table.item(row, 4).setToolTip(f"上次检查：{checked_at}\n{check_state.get('last_result', '')}")
             if worker.id not in self.worker_actions:
                 panel = QWidget()
                 buttons = {}
@@ -364,7 +369,7 @@ class MainWindow(QMainWindow):
         def choose(threads):
             picker = ThreadPicker(threads, self.editor_dialog or self)
             if picker.exec() and picker.selected_id:
-                self.editor.fields['target_thread_id'].setText(picker.selected_id)
+                self.editor.select_thread(next(thread for thread in threads if thread.id == picker.selected_id))
         self.run_job('读取会话', lambda: self.controller.codex.list_threads(), choose)
 
     def check_connections(self):
@@ -434,8 +439,14 @@ class MainWindow(QMainWindow):
 
     def check_worker(self, identifier):
         worker = self.worker(identifier)
-        if self.ready and worker and worker.enabled:
-            self.run_job('check:' + identifier, lambda: self.controller.monitor.check_now(worker))
+        if self.ready and worker and worker.enabled and 'check:' + identifier not in self.controller._jobs:
+            self.statusBar().showMessage(f'{worker.name}：正在检查，已有查询运行时会在它结束后立即再查一次…')
+            def checked(identifiers):
+                result = '检查已取消' if identifiers is None else f'检查完成，发现 {len(identifiers)} 个新待办'
+                suffix = '（扫描标题、正文及评论；匹配名称 ' + worker.assignment_value.removeprefix('@') + '，可带 @）' if worker.assignment_mode == 'mention' else ''
+                self.statusBar().showMessage(f'{worker.name}：{result}{suffix}')
+            self.run_job('check:' + identifier, lambda: self.controller.monitor.check_now(worker, wait=True), checked)
+            self.refresh_snapshot()
 
     def show_history(self):
         dialog = QDialog(self)

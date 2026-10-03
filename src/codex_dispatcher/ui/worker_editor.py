@@ -13,6 +13,7 @@ class WorkerEditor(QWidget):
     def __init__(self):
         super().__init__()
         self.worker, self.fields = Worker(), {}
+        self.thread_names = {}
         form = QFormLayout(self)
         form.setSpacing(12)
         for key, title, placeholder in (
@@ -27,7 +28,7 @@ class WorkerEditor(QWidget):
             self.fields[key] = field
             if key == 'assignment_value':
                 self.fields['assignment_mode'] = combo = QComboBox()
-                combo.addItem('@ 提及', 'mention')
+                combo.addItem('名称提及', 'mention')
                 combo.addItem('Label', 'label')
                 combo.addItem('Assignee', 'assignee')
                 combo.currentIndexChanged.connect(self.update_assignment_hint)
@@ -54,6 +55,12 @@ class WorkerEditor(QWidget):
                 row.addWidget(field, 1)
                 row.addWidget(choose)
                 form.addRow(title, row)
+                self.thread_name = QLabel()
+                self.thread_name.setTextFormat(Qt.PlainText)
+                self.thread_name.setWordWrap(True)
+                self.thread_name.setStyleSheet('color: #68768a;')
+                form.addRow('', self.thread_name)
+                field.textChanged.connect(self.update_thread_name)
             else:
                 form.addRow(title, field)
         self.fields['enabled'] = enabled = QCheckBox('启用此 Worker')
@@ -86,6 +93,8 @@ class WorkerEditor(QWidget):
 
     def load(self, worker):
         self.worker = replace(worker)
+        if worker.target_thread_id:
+            self.thread_names[worker.target_thread_id] = worker.target_thread_name or '未命名会话'
         for key, field in self.fields.items():
             value = getattr(worker, key)
             if isinstance(field, QCheckBox):
@@ -102,6 +111,17 @@ class WorkerEditor(QWidget):
                 field.setText(value)
         self.update_assignment_hint()
         self.update_preview()
+        self.update_thread_name()
+
+    def update_thread_name(self):
+        identifier = self.fields['target_thread_id'].text().strip()
+        name = self.thread_names.get(identifier)
+        self.thread_name.setText('会话名称：' + name if name else '会话名称：选择会话后显示；粘贴 ID 后保存时读取')
+
+    def select_thread(self, thread):
+        self.thread_names[thread.id] = thread.name or thread.preview[:90] or '未命名会话'
+        self.fields['target_thread_id'].setText(thread.id)
+        self.update_thread_name()
 
     def update_preview(self):
         if not hasattr(self, 'preview'):

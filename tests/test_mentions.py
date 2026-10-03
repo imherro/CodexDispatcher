@@ -18,6 +18,9 @@ from codex_dispatcher.storage.database import Database
     ('@codex-1070-r', False), ('email@codex-1070-rc', False),
     ('https://github.com/@codex-1070-rc', False), ('@@codex-1070-rc', False),
     ('@codex-1070-rc_name', False), ('@someone-else', False),
+    ('codex-1070-rc 检查 PR', True), ('codex-1070-rc检查 PR', True),
+    ('CODEX-1070-RC', True), ('codex-1070-rc-other', False),
+    ('codex-1070-rc@example.com', False), ('prefixcodex-1070-rc', False),
 ])
 def test_exact_mention_boundary(text, expected):
     assert contains_mention(text, '@codex-1070-rc') is expected
@@ -68,6 +71,14 @@ def test_empty_repository_does_not_query_comments(worker):
     github, calls = service([], [])
     assert github.list_assigned_issues(replace(worker, assignment_mode='mention')) == []
     assert len(calls) == 1
+
+
+def test_reply_matches_without_at_even_when_title_names_another_agent(worker):
+    github, _ = service([row(4, title='codex-1070-1 检查 PR')], [[
+        comment(10, number=4, text='codex-1070-rc检查你提交的pr是否合并'),
+        comment(11, number=4, text='codex-1070-rc 检查你提交的pr是否合并')]])
+    worker = replace(worker, assignment_mode='mention', assignment_value='codex-1070-rc')
+    assert [issue.comment_id for issue in github.list_assigned_issues(worker)] == [10, 11]
 
 
 def test_comments_exclude_closed_issues_and_ignored_labels(worker):

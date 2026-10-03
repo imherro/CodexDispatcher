@@ -45,7 +45,7 @@ def normalize_mention(value: str) -> str:
 
 def contains_mention(text: str, value: str) -> bool:
     name = normalize_mention(value)
-    return re.search(r'(?<![A-Za-z0-9_@/.-])@' + re.escape(name) + r'(?![A-Za-z0-9_-])',
+    return re.search(r'(?<![A-Za-z0-9_@/.-])@?' + re.escape(name) + r'(?![A-Za-z0-9_@-])',
                      text or '', re.IGNORECASE) is not None
 
 

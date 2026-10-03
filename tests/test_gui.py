@@ -48,6 +48,14 @@ def test_small_editor_save_metadata_only_and_no_stream(app, tmp_path, worker, mo
     window.show()
     wait_until(app, lambda: window.ready)
     window.editor.load(worker)
+    named = replace(worker, target_thread_name='修电脑项目')
+    window.editor.load(named)
+    assert window.editor.thread_name.text() == '会话名称：修电脑项目'
+    window.editor.select_thread(ThreadInfo('other-thread', str(tmp_path), name='另一个会话'))
+    assert window.editor.thread_name.text() == '会话名称：另一个会话'
+    window.editor.fields['target_thread_id'].setText('unverified-thread')
+    assert '另一个会话' not in window.editor.thread_name.text()
+    window.editor.load(worker)
     template = '{notification_id}\n请处理 {issue_url}，完成后关闭 Issue。'
     window.editor.fields['notification_template'].setPlainText(template)
     assert window.editor.collect().notification_template == template
@@ -128,9 +136,12 @@ def test_worker_buttons_are_independent_with_manual_check_and_countdown(app, tmp
     assert window.worker_table.item(1,4).text() == '—'
     before = github.list_assigned_issues.call_count
     window.worker_actions[worker2.id]['check'].click()
+    assert '正在检查' in window.statusBar().currentMessage()
+    assert window.worker_table.item(1,4).text() == '检查中…'
     wait_until(app, lambda: 'check:' + worker2.id not in controller._jobs)
     assert github.list_assigned_issues.call_count > before
     assert not controller.monitor.is_monitoring(worker2.id)
+    assert '检查完成，发现 0 个新待办' in window.statusBar().currentMessage()
     codex.active_threads.return_value = ['second-thread']
     button.click()
     wait_until(app, lambda: button.accessibleName() == '开始监测' and button.isEnabled())

@@ -56,24 +56,31 @@ class MonitorService:
 
     def countdown(self, worker_id):
         with self._guard:
+            check = self._checks.get(worker_id)
+            if check and check.locked():
+                return 0
             if worker_id not in self._workers:
                 return None
             return max(0, math.ceil(self._next_checks.get(worker_id, time.monotonic()) - time.monotonic()))
 
-    def check_now(self, worker, *, stop=None):
+    def check_now(self, worker, *, stop=None, wait=False):
         with self._guard:
             check = self._checks.setdefault(worker.id, threading.Lock())
-        if not check.acquire(blocking=False):
+            previous_monitor = self._workers.get(worker.id) if wait else None
+        # A manual click requests a fresh scan, even when a periodic scan is
+        # running. Wait for that scan instead of silently discarding the click.
+        if not check.acquire(blocking=wait):
             return []
         try:
-            if self._closed or (stop and stop.is_set()):
-                return []
+            cancelled = lambda: self._closed or (stop and stop.is_set()) or (previous_monitor and previous_monitor.is_set())
+            if cancelled():
+                return None if wait else []
             # Authorization to execute this manual check / monitor remains in queue until paused.
             identifiers = self.dispatch.discover(worker)
-            if not self._closed and not (stop and stop.is_set()):
+            if not cancelled():
                 self.queue.allow(worker.id, worker.target_thread_id)
             state = {'status': 'Monitoring' if self.is_monitoring(worker.id) else 'Paused',
-                     'last_check': now(), 'last_result': f'{len(identifiers)} 个新待办' if identifiers else self.dispatch.db.runtime().get(worker.id, {}).get('last_result', '—')}
+                     'last_check': now(), 'last_result': f'{len(identifiers)} 个新待办'}
             self.dispatch.db.set_runtime(worker.id, state)
             return identifiers
         finally:
