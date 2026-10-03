@@ -1,22 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
-import logging
-from pathlib import Path
-
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QPixmap, QColor
-from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout,
-                              QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-                              QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
-                              QStyle, QSystemTrayIcon, QTabWidget, QVBoxLayout, QWidget)
-
+from html import escape
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QHBoxLayout,
+    QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QSystemTrayIcon,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from codex_dispatcher import __version__
 from codex_dispatcher.domain.models import Worker
-from codex_dispatcher.runtime.locks import ThreadLocks
-from codex_dispatcher.services.project_service import inspect_project
-from codex_dispatcher.services.security import redact
-from .dashboard import Dashboard
-from .history_view import HistoryView, text_dialog
+from .history_view import HistoryView
 from .thread_picker import ThreadPicker
 from .worker_editor import WorkerEditor
 
@@ -45,114 +37,94 @@ class MainWindow(QMainWindow):
         self.controller = controller
         self.workers, self.runtime, self.records = [], {}, []
         self.callbacks = {}
-        self.ready = False
-        self._force_close = False
+        self.ready = self._force_close = False
         self._selected_id = None
-        self._stream_prefix = None
-        self.setWindowTitle('Codex Dispatcher')
+        self.editor = WorkerEditor()
+        self.editor_dialog = None
+        self.editor.refresh_threads.connect(self.refresh_threads)
+        self.setWindowTitle('Codex Dispatcher v' + __version__)
         self.setWindowIcon(app_icon())
-        self.resize(1280, 900)
-        self.setMinimumSize(1040, 720)
-        self.setStyleSheet('''
-            QMainWindow { background: #f3f5f7; }
+        self.resize(1060, 570)
+        self.setMinimumSize(850, 440)
+        self.setStyleSheet("""
+            QMainWindow { background: #f4f6f8; }
             QWidget { font-family: "Segoe UI", "Microsoft YaHei UI", "SimHei"; font-size: 13px; color: #233043; }
-            QPushButton { background: #ffffff; border: 1px solid #ced6df; border-radius: 5px; padding: 7px 12px; }
+            QPushButton { background: white; border: 1px solid #ced6df; border-radius: 6px; padding: 8px 16px; }
             QPushButton:hover { background: #eaf1f5; }
             QPushButton:disabled { color: #8895a5; background: #eef1f4; }
             QPushButton#primary { background: #176b63; color: white; border-color: #176b63; }
+            QPushButton#danger { background: #b42318; color: white; border-color: #b42318; }
             QLineEdit, QComboBox, QSpinBox { background: white; border: 1px solid #ced6df; border-radius: 4px; padding: 6px; }
-            QPlainTextEdit, QListWidget, QTableWidget { background: white; border: 1px solid #d9e0e8; }
-            QTabWidget::pane { background: white; border: 1px solid #d9e0e8; }
-            QTabBar::tab { padding: 8px 17px; background: #e8edf2; }
-            QTabBar::tab:selected { background: white; color: #176b63; }
+            QTableWidget { background: white; border: 1px solid #d9e0e8; selection-background-color: #e3f1ee; selection-color: #233043; }
+            QHeaderView::section { background: #edf1f5; border: none; padding: 10px; font-weight: 600; }
             QLabel#title { font-size: 23px; font-weight: 600; }
             QLabel#hint { color: #68768a; }
-            QLabel#notice { background: #eef6f4; color: #24574f; padding: 10px; border-radius: 5px; }
-            QHeaderView::section { background: #edf1f5; border: none; padding: 7px; font-weight: 600; }
-        ''')
+        """)
         central = QWidget()
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(18, 14, 18, 12)
-        layout.setSpacing(12)
+        layout.setContentsMargins(22, 18, 22, 14)
+        layout.setSpacing(16)
         header = QHBoxLayout()
         title = QLabel('Codex Dispatcher')
         title.setObjectName('title')
         header.addWidget(title)
         header.addStretch()
-        self.github_status = QLabel('GitHub · 未检查')
-        self.codex_status = QLabel('Codex · 未检查')
-        for status in (self.github_status, self.codex_status):
-            status.setObjectName('hint')
+        self.github_status, self.codex_status = QLabel(), QLabel()
+        for status, name in ((self.github_status, 'GitHub'), (self.codex_status, 'Codex')):
+            self.set_connection_status(status, name, '未检查')
             header.addWidget(status)
         connection = QPushButton('检查连接')
         connection.clicked.connect(self.check_connections)
         header.addWidget(connection)
         layout.addLayout(header)
+        hint = QLabel('发现新待办 → 通知对应 agent 会话。没有新待办时保持安静。')
+        hint.setObjectName('hint')
+        layout.addWidget(hint)
         toolbar = QHBoxLayout()
         self.action_buttons = {}
-        for key, label, callback in [
-            ('new', '+ 新建 Worker', self.new_worker), ('save', '保存', self.save_worker),
-            ('test', '测试配置', self.test_configuration), ('start', '开始监视', self.start_selected),
-            ('stop', '停止监视', self.stop_selected), ('check', '立即检查', self.check_selected),
-            ('dry', '测试运行 / Dry Run', self.dry_run),
-        ]:
+        for key, label, callback in (
+            ('new', '+ 添加 Worker', self.new_worker),
+            ('edit', '编辑', self.edit_selected),
+            ('monitor', '开始监测', self.toggle_monitoring),
+        ):
             button = QPushButton(label)
             button.clicked.connect(callback)
             button.setEnabled(False)
-            if key == 'start':
-                button.setObjectName('primary')
             self.action_buttons[key] = button
             toolbar.addWidget(button)
         toolbar.addStretch()
+        self.summary = QLabel('0 个 Worker')
+        toolbar.addWidget(self.summary)
         layout.addLayout(toolbar)
-        self.splitter = QSplitter(Qt.Vertical)
-        top = QSplitter(Qt.Horizontal)
-        self.worker_list = QListWidget()
-        self.worker_list.setMinimumWidth(210)
-        self.worker_list.currentItemChanged.connect(self.select_worker)
-        top.addWidget(self.worker_list)
-        self.editor = WorkerEditor()
-        top.addWidget(self.editor)
-        top.setSizes([245, 975])
-        self.splitter.addWidget(top)
-        self.lower = QTabWidget()
-        self.logs = QPlainTextEdit()
-        self.logs.setReadOnly(True)
-        self.logs.setMaximumBlockCount(500)
-        log_panel = QWidget()
-        log_layout = QVBoxLayout(log_panel)
-        log_layout.setContentsMargins(8, 8, 8, 8)
-        log_layout.addWidget(self.logs)
-        open_log = QPushButton('查看完整文件日志')
-        open_log.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.controller.db.path.parent / 'logs'))))
-        log_layout.addWidget(open_log)
-        self.lower.addTab(log_panel, '运行日志')
-        self.output = QPlainTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setMaximumBlockCount(2000)
-        self.lower.addTab(self.output, 'Codex 实时输出')
-        self.dashboard = Dashboard()
-        self.lower.addTab(self.dashboard, 'Worker 概览')
-        self.history = HistoryView()
-        self.lower.addTab(self.history, '任务历史')
-        self.splitter.addWidget(self.lower)
-        self.splitter.setSizes([555, 260])
-        layout.addWidget(self.splitter)
+        self.worker_table = QTableWidget(0, 5)
+        self.worker_table.setHorizontalHeaderLabels(['Worker / 仓库', '分配规则', 'Agent 会话', '监测状态', '最近通知'])
+        self.worker_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.worker_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.worker_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.worker_table.verticalHeader().hide()
+        self.worker_table.horizontalHeader().setStretchLastSection(True)
+        for col, width in enumerate((250, 170, 210, 100)):
+            self.worker_table.setColumnWidth(col, width)
+        self.worker_table.itemSelectionChanged.connect(self.select_worker)
+        self.worker_table.doubleClicked.connect(self.edit_selected)
+        layout.addWidget(self.worker_table, 1)
+        footer = QHBoxLayout()
+        self.empty_hint = QLabel('点击“添加 Worker”，绑定仓库、分配规则和 agent 会话。')
+        self.empty_hint.setObjectName('hint')
+        footer.addWidget(self.empty_hint)
+        footer.addStretch()
+        history_button = QPushButton('通知记录…')
+        history_button.clicked.connect(self.show_history)
+        footer.addWidget(history_button)
+        layout.addLayout(footer)
         self.setCentralWidget(central)
-        self.statusBar().showMessage('正在加载本地配置…')
-
-        self.editor.refresh_threads.connect(self.refresh_threads)
-        self.editor.verify_thread.connect(self.verify_thread)
-        self.editor.test_message.connect(self.send_test_message)
-        self.editor.test_github.connect(self.test_github)
-        self.editor.inspect_project.connect(self.inspect_project)
-        self.editor.refresh_models.connect(self.refresh_models)
-        self.history.open_issue.connect(self.controller.github.open_issue_in_browser)
+        self.history = HistoryView()
+        self.history.open_issue.connect(controller.github.open_issue_in_browser)
         self.history.redispatch.connect(self.redispatch)
         self.history.recovery.connect(self.check_recovery)
         self.history.mark_handled.connect(self.mark_handled)
-        self.controller.finished.connect(self.finish_job)
-        self.controller.event.connect(self.receive_event)
+        controller.finished.connect(self.finish_job)
+        controller.event.connect(self.receive_event)
         self.timer = QTimer(self)
         self.timer.setInterval(2000)
         self.timer.timeout.connect(self.refresh_snapshot)
@@ -160,55 +132,53 @@ class MainWindow(QMainWindow):
         if tray_enabled and QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(self.windowIcon(), self)
             menu = QMenu()
-            for label, callback in [('打开 Codex Dispatcher', self.open_window), ('开始全部监视', self.start_all),
-                                    ('停止全部监视', self.stop_all), ('立即检查', self.check_all), ('退出', self.quit_app)]:
+            for label, callback in (('打开', self.open_window), ('开始 / 停止监测', self.toggle_monitoring), ('退出', self.quit_app)):
                 action = QAction(label, self)
                 action.triggered.connect(callback)
                 menu.addAction(action)
             self.tray.setContextMenu(menu)
             self.tray.activated.connect(lambda reason: self.open_window() if reason == QSystemTrayIcon.DoubleClick else None)
-            self.tray.setToolTip('Codex Dispatcher · Paused')
+            self.tray.setToolTip('Codex Dispatcher')
             self.tray.show()
-        self.controller.initialize()
+        self.statusBar().showMessage('正在加载配置…')
+        controller.initialize()
+
+    @staticmethod
+    def set_connection_status(widget, name, status):
+        color = '#16803c' if status == 'Connected' else '#b42318' if status == 'Not connected' else '#8895a5'
+        widget.setText(f'<span style="color:{color}">●</span> {escape(name)} · {escape(status)}')
 
     def run_job(self, name, function, callback=None, on_error=None):
         if self.controller.submit(name, function):
             self.callbacks[name] = (callback, on_error)
-            self.statusBar().showMessage(name + '…')
+            self.update_monitor_button()
 
     def finish_job(self, name, value, error):
         self.controller.acknowledge(name)
         callback, on_error = self.callbacks.pop(name, (None, None))
         if error:
-            self.log('ERROR', name + ': ' + error)
-            self.statusBar().showMessage(error[:160])
+            self.statusBar().showMessage(error[:180])
             if on_error:
                 on_error(error)
-                return
-            if name != 'snapshot':
-                QMessageBox.warning(self, name, error)
-            if name == 'initialize':
-                return
+            elif name != 'snapshot':
+                QMessageBox.warning(self, '操作未完成', error)
         elif name == 'initialize':
             self.ready = True
-            for button in self.action_buttons.values():
-                button.setEnabled(True)
+            self.action_buttons['new'].setEnabled(True)
             self.apply_snapshot(value)
             if value['recovery']:
-                self.log('WARNING', f"{value['recovery']} 个残留任务需要恢复检查，请打开任务历史。")
-                self.lower.setCurrentWidget(self.history)
-            if not self.workers:
-                self.new_worker()
+                self.statusBar().showMessage('有发送结果不确定的旧记录，请在“通知记录”中确认。')
+            else:
+                self.statusBar().clearMessage()
             self.timer.start()
             self.check_connections()
         elif name == 'snapshot':
             self.apply_snapshot(value)
         elif callback:
             callback(value)
-        if not error and name != 'snapshot':
-            self.statusBar().showMessage(name + '完成')
-        if name in ('save', 'redispatch', 'recovery', 'mark_handled', 'check', 'start', 'stop'):
+        if name in ('save', 'start', 'stop', 'redispatch', 'recovery', 'mark_handled'):
             self.refresh_snapshot()
+        self.update_monitor_button()
 
     def refresh_snapshot(self):
         if self.ready:
@@ -216,256 +186,193 @@ class MainWindow(QMainWindow):
 
     def apply_snapshot(self, snapshot):
         self.workers, self.runtime, self.records = snapshot['workers'], snapshot['runtime'], snapshot['history']
-        selected = self._selected_id
-        self.worker_list.blockSignals(True)
-        self.worker_list.clear()
-        for worker in self.workers:
-            state = self.runtime.get(worker.id, {})
-            label = f"{worker.name}\n{worker.repository}\n{state.get('status', 'Paused')} · Queue {state.get('queue', 0)}"
-            item = QListWidgetItem(label)
-            item.setData(Qt.UserRole, worker.id)
-            self.worker_list.addItem(item)
-            if worker.id == selected:
-                self.worker_list.setCurrentItem(item)
-        self.worker_list.blockSignals(False)
-        self.dashboard.update_state(self.workers, self.runtime)
+        self.worker_table.blockSignals(True)
+        self.worker_table.setRowCount(len(self.workers))
+        for row, worker in enumerate(self.workers):
+            monitoring = self.controller.monitor.is_monitoring(worker.id)
+            records = [r for r in self.records if r['worker_id'] == worker.id]
+            last = records[0] if records else None
+            state = '监测中' if monitoring else '已暂停' if worker.enabled else '已禁用'
+            result = '—'
+            if last:
+                status = {'queued': '等待通知', 'dispatching': '正在通知', 'dispatched': '已通知', 'notified': '已通知',
+                          'completed': '已通知', 'failed': '通知失败', 'ignored': '已跳过', 'recovery_required': '待确认'}.get(last['status'], last['status'])
+                result = f"#{last['issue_number']} · {status}"
+                if last['status'] == 'notified' and last['error'] and not last['finished_at']:
+                    result += ' · 待确认'
+            values = [worker.name + '\n' + worker.repository, worker.assignment_mode + ': ' + worker.assignment_value,
+                      worker.target_thread_name or worker.target_thread_id, state, result]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(worker.target_thread_id if col == 2 else value if col != 4 or not last else value + '\n' + (last['error'] or last['dispatch_time'] or ''))
+                self.worker_table.setItem(row, col, item)
+            self.worker_table.setRowHeight(row, 60)
+            if worker.id == self._selected_id:
+                self.worker_table.selectRow(row)
+        self.worker_table.blockSignals(False)
+        self.action_buttons['edit'].setEnabled(self.ready and bool(self.workers))
+        self.summary.setText(f'{len(self.workers)} 个 Worker · {sum(self.controller.monitor.is_monitoring(w.id) for w in self.workers)} 个监测中')
+        self.empty_hint.setVisible(not self.workers)
         self.history.set_records(self.records)
-        if self.tray:
-            running = any(r['status'] in ('dispatching','dispatched') for r in self.records)
-            error = any(r['status'] == 'recovery_required' for r in self.records)
-            monitoring = any(s.get('status') == 'Monitoring' for s in self.runtime.values())
-            status = 'Error' if error else 'Running' if running else 'Monitoring' if monitoring else 'Paused'
-            self.tray.setToolTip('Codex Dispatcher · ' + status)
-        if not selected and self.workers and not self.editor.dirty():
-            self.worker_list.setCurrentRow(0)
+        if self.workers and not self._selected_id:
+            self.worker_table.selectRow(0)
+        self.update_monitor_button()
 
-    def select_worker(self, current, previous):
-        if not current:
+    def select_worker(self):
+        row = self.worker_table.currentRow()
+        if 0 <= row < len(self.workers):
+            self._selected_id = self.workers[row].id
+
+    def open_editor(self, worker):
+        if self.editor_dialog:
+            self.editor_dialog.raise_()
             return
-        if self.editor.dirty():
-            answer = QMessageBox.question(self, '未保存的配置', '放弃当前未保存的修改，切换 Worker？')
-            if answer != QMessageBox.Yes:
-                self.worker_list.blockSignals(True)
-                self.worker_list.setCurrentItem(previous)
-                self.worker_list.blockSignals(False)
-                return
-        identifier = current.data(Qt.UserRole)
-        worker = next((w for w in self.workers if w.id == identifier), None)
-        if worker:
-            self._selected_id = identifier
-            self.editor.load(worker)
+        self.editor.load(worker)
+        dialog = QDialog(self)
+        dialog.setWindowTitle('配置 Worker')
+        dialog.resize(650, 350)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(self.editor)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setText('保存')
+        buttons.button(QDialogButtonBox.Cancel).setText('取消')
+        buttons.accepted.connect(self.save_worker)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        def closed():
+            self.editor.setParent(None)
+            self.editor.hide()
+            self.editor_dialog = None
+            dialog.deleteLater()
+        dialog.finished.connect(closed)
+        self.editor_dialog = dialog
+        dialog.setModal(True)
+        dialog.show()
 
     def new_worker(self):
-        if not self.ready:
-            return
-        if self.editor.dirty() and QMessageBox.question(self, '未保存的配置', '放弃当前修改并新建 Worker？') != QMessageBox.Yes:
-            return
-        self.worker_list.clearSelection()
-        self._selected_id = None
-        self.editor.load(Worker())
-        self.editor.tabs.setCurrentIndex(0)
-        self.editor.fields['name'].setFocus()
+        if self.ready:
+            self.open_editor(Worker())
 
-    def saved_worker(self):
-        worker = next((w for w in self.workers if w.id == self.editor.worker.id), None)
-        if not worker or self.editor.dirty():
-            QMessageBox.information(self, '先保存配置', '请先保存当前 Worker 配置。')
-            return None
-        return worker
+    def edit_selected(self):
+        worker = next((w for w in self.workers if w.id == self._selected_id), None)
+        if worker:
+            self.open_editor(worker)
 
     def save_worker(self):
         worker = self.editor.collect()
         if self.controller.monitor.is_monitoring(worker.id) or any(r['worker_id'] == worker.id and
-            r['status'] in ('queued','dispatching','dispatched','recovery_required') for r in self.records):
-            QMessageBox.information(self, '当前 Worker 有任务', '请先停止监视，并处理排队 / 运行 / 恢复任务，再修改配置。')
+            (r['status'] in ('queued', 'dispatching', 'dispatched', 'recovery_required') or r['status'] == 'notified' and not r['finished_at']) for r in self.records):
+            QMessageBox.information(self, '暂不能修改', '请先停止监测，并等待已通知会话结束、处理待确认记录。')
             return
         def save():
             self.controller.dispatch.validate_worker(worker)
+            self.controller.github.test_repository(worker.repository)
             self.controller.db.save_worker(worker)
             return worker
         def saved(value):
             self._selected_id = value.id
             self.editor.load(value)
-            self.log('INFO', 'Worker 配置已保存：' + value.name)
+            if self.editor_dialog:
+                self.editor_dialog.accept()
+            self.statusBar().showMessage('Worker 已保存')
         self.run_job('save', save, saved)
 
-    def test_configuration(self):
-        worker = self.editor.collect()
-        self.run_job('测试配置', lambda: self.controller.dispatch.test_configuration(worker),
-                     lambda result: QMessageBox.information(self, '测试配置', result))
-
-    def test_github(self):
-        repository = self.editor.fields['repository'].text()
-        self.run_job('测试 GitHub', lambda: self.controller.github.test_repository(repository),
-                     lambda repo: QMessageBox.information(self, 'GitHub OK', repo + '\n登录、访问和 Issue 查询通过。'))
-
-    def check_connections(self):
-        def check():
-            result = {}
-            for key, action in [('GitHub', self.controller.github.check_auth), ('Codex', self.controller.codex.check_connection)]:
-                try:
-                    action()
-                    result[key] = 'Connected'
-                except Exception as exc:
-                    result[key] = 'Not connected · ' + redact(str(exc))[:90]
-            return result
-        def display(result):
-            self.github_status.setText('GitHub · ' + result['GitHub'].split(' · ')[0])
-            self.github_status.setToolTip(result['GitHub'])
-            self.codex_status.setText('Codex · ' + result['Codex'].split(' · ')[0])
-            self.codex_status.setToolTip(result['Codex'])
-            for key, value in result.items():
-                self.log('INFO' if value == 'Connected' else 'WARNING', key + ': ' + value)
-        self.run_job('检查连接', check, display)
-
-    def refresh_threads(self, path):
-        if not path.strip() or not Path(path).is_dir():
-            QMessageBox.warning(self, '选择项目', '请先选择存在的本地项目目录。')
-            return
-        def show(threads):
-            self.editor.project_info.setText(f'项目：{path}\nCodex 会话：{len(threads)}')
-            picker = ThreadPicker(threads, self)
+    def refresh_threads(self, project=''):
+        def choose(threads):
+            picker = ThreadPicker(threads, self.editor_dialog or self)
             if picker.exec() and picker.selected_id:
                 self.editor.fields['target_thread_id'].setText(picker.selected_id)
-        self.run_job('获取项目会话', lambda: self.controller.codex.list_threads(path), show)
+        self.run_job('读取会话', lambda: self.controller.codex.list_threads(), choose)
 
-    def inspect_project(self, path):
-        def show(info):
-            self.editor.project_info.setText(f"项目：{info['path']}\nGit remote：{info['remote'] or '—'}\n"
-                                             f"Branch：{info['branch'] or '—'}\n{info.get('note', '')}")
-        self.run_job('读取项目 Git 信息', lambda: inspect_project(path), show)
+    def check_connections(self):
+        for widget, name in ((self.github_status, 'GitHub'), (self.codex_status, 'Codex')):
+            self.set_connection_status(widget, name, '检查中')
+        def check():
+            result = {}
+            for name, action in (('GitHub', self.controller.github.check_auth), ('Codex', self.controller.codex.check_connection)):
+                try:
+                    action()
+                    result[name] = ('Connected', '')
+                except Exception as exc:
+                    result[name] = ('Not connected', str(exc))
+            return result
+        def apply(value):
+            for widget, name in ((self.github_status, 'GitHub'), (self.codex_status, 'Codex')):
+                status, error = value[name]
+                self.set_connection_status(widget, name, status)
+                widget.setToolTip(error)
+        self.run_job('检查连接', check, apply)
 
-    def verify_thread(self):
-        worker = self.editor.collect()
-        self.run_job('验证会话', lambda: self.controller.codex.validate_thread(worker.target_thread_id,
-                     worker.target_project, worker.allow_mismatch),
-                     lambda thread: QMessageBox.information(self, 'Thread OK', f'{thread.id}\n{thread.cwd}\n只读验证成功，未发送消息。'))
+    def update_monitor_button(self):
+        button = self.action_buttons['monitor']
+        monitoring = self.ready and any(self.controller.monitor.is_monitoring(w.id) for w in self.workers)
+        pending = self.controller._jobs & {'start', 'stop'}
+        button.setText('正在开始…' if 'start' in pending else '正在停止…' if 'stop' in pending else '停止监测' if monitoring else '开始监测')
+        button.setEnabled(self.ready and bool(self.workers) and not pending)
+        style = 'danger' if monitoring else 'primary'
+        if button.objectName() != style:
+            button.setObjectName(style)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
-    def refresh_models(self):
-        self.run_job('刷新模型', self.controller.codex.list_models, self.editor.set_models)
-
-    def send_test_message(self):
-        worker = self.editor.collect()
-        if QMessageBox.question(self, '确认发送测试消息', '这会向指定真实 Codex 会话添加一个 turn，并使用模型额度。\n'
-                                f'Thread：{worker.target_thread_id}\n请确认发送“仅回复已收到，不修改任何文件”？') != QMessageBox.Yes:
+    def toggle_monitoring(self):
+        if not self.ready:
             return
-        def send():
-            with ThreadLocks.get(worker.target_thread_id):
-                if self.controller.db.thread_blocked(worker.target_thread_id):
-                    raise ValueError('目标会话有运行或恢复任务，请先处理它')
-                return self.controller.codex.send_task(worker.target_thread_id,
-                    '[Codex Dispatcher Test]\n请仅回复已收到，不修改任何文件，不调用工具。', worker.target_project,
-                    allow_mismatch=worker.allow_mismatch, trusted=True, on_event=self.controller.emit)
-        self.run_job('发送测试消息', send, lambda result: text_dialog(self, '测试回复', result.final_response or result.error))
-
-    def start_selected(self):
-        worker = self.saved_worker()
-        if worker:
-            self.start_workers([worker])
-
-    def start_workers(self, workers):
-        def start():
-            for worker in workers:
-                if worker.enabled:
-                    self.controller.dispatch.test_configuration(worker)
-                    self.controller.monitor.start(worker)
-        self.run_job('start', start)
-
-    def stop_selected(self):
-        worker = self.saved_worker()
-        if not worker:
-            return
-        active = worker.target_thread_id in self.controller.codex.active_threads()
-        interrupt = False
-        if active:
-            dialog = QMessageBox(self)
-            dialog.setWindowTitle('停止监视')
-            dialog.setText('已有任务正在 Codex 中执行。选择停止方式：')
-            only = dialog.addButton('只停止后续监视', QMessageBox.AcceptRole)
-            both = dialog.addButton('同时请求停止当前任务', QMessageBox.DestructiveRole)
-            dialog.addButton('取消', QMessageBox.RejectRole)
-            dialog.exec()
-            if dialog.clickedButton() not in (only, both):
-                return
-            interrupt = dialog.clickedButton() == both
-        def stop():
-            self.controller.monitor.stop(worker.id)
-            if interrupt:
-                self.controller.codex.interrupt(worker.target_thread_id)
-        self.run_job('stop', stop)
-
-    def check_selected(self):
-        worker = self.saved_worker()
-        if worker:
-            self.run_job('check', lambda: self.controller.monitor.check_now(worker))
-
-    def dry_run(self):
-        worker = self.editor.collect()
-        dialog = QDialog(self)
-        dialog.setWindowTitle('Dry Run')
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel('查询 GitHub 并预览最终 Prompt；不会向目标会话发送消息，也不会写成功记录。'))
-        normalize = QCheckBox('真实测试廉价整理模型（会消耗额度，默认关闭）')
-        normalize.setEnabled(worker.dispatcher_enabled)
-        layout.addWidget(normalize)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        if dialog.exec():
-            use_normalizer = normalize.isChecked()
-            def show(prompts):
-                text = '\n\n'.join(f"Would dispatch to:\nProject: {p['project']}\nThread ID: {p['thread_id']}\n"
-                                   f"Issue: #{p['issue']}\n\n{p['prompt']}" for p in prompts)
-                text_dialog(self, 'Dry Run · 未派送', text or '没有新的匹配 Issue（0 模型调用）。')
-            self.run_job('Dry Run', lambda: self.controller.dispatch.dry_run(worker, use_normalizer=use_normalizer), show)
+        if any(self.controller.monitor.is_monitoring(w.id) for w in self.workers):
+            self.stop_all()
+        else:
+            self.start_all()
 
     def start_all(self):
+        def start():
+            enabled = [w for w in self.workers if w.enabled]
+            if not enabled:
+                raise ValueError('请先启用至少一个 Worker')
+            for worker in enabled:
+                self.controller.dispatch.test_configuration(worker)
+                self.controller.db.save_worker(worker)
+            for worker in enabled:
+                self.controller.monitor.start(worker)
         if self.ready:
-            self.start_workers(self.workers)
+            self.run_job('start', start)
 
     def stop_all(self):
         if self.ready:
             self.run_job('stop', lambda: [self.controller.monitor.stop(w.id) for w in self.workers])
 
-    def check_all(self):
-        if self.ready:
-            self.run_job('check', lambda: [self.controller.monitor.check_now(w) for w in self.workers if w.enabled])
+    def show_history(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle('通知记录')
+        dialog.resize(1120, 500)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(self.history)
+        dialog.exec()
+        self.history.setParent(None)
+        self.history.hide()
 
     def redispatch(self, identifier):
         def send():
             new_id = self.controller.dispatch.redispatch(identifier)
             record = self.controller.db.record(new_id)
             self.controller.queue.allow(record['worker_id'], record['target_thread_id'])
-            return new_id
         self.run_job('redispatch', send)
 
     def check_recovery(self, identifier):
         self.run_job('recovery', lambda: self.controller.dispatch.check_recovery(identifier),
-                     lambda text: QMessageBox.information(self, '恢复检查', text))
+                     lambda text: QMessageBox.information(self, '检查结果', text))
 
     def mark_handled(self, identifier):
-        if QMessageBox.question(self, '标记已处理', '请先确认原会话没有未完成的任务。\n标记后会解除该记录对队列的阻塞。确认标记？') == QMessageBox.Yes:
+        if QMessageBox.question(self, '确认通知状态', '请先确认原会话已收到通知或没有未完成的任务，确认后解除队列阻塞？') == QMessageBox.Yes:
             self.run_job('mark_handled', lambda: self.controller.dispatch.mark_handled(identifier))
 
     def receive_event(self, event):
-        kind, text = event.get('kind', ''), event.get('text', '')
-        if kind in ('message', 'tool', 'status'):
-            self.output.moveCursor(self.output.textCursor().MoveOperation.End)
-            prefix = event.get('record_id') or event.get('worker_id') or '测试'
-            if prefix != self._stream_prefix:
-                self.output.insertPlainText('\n\n[' + prefix + ']\n')
-                self._stream_prefix = prefix
-            self.output.insertPlainText(text if kind == 'message' else '\n' + text + '\n')
-        elif kind != 'checked':
-            self.log('ERROR' if kind == 'error' else 'INFO', text)
-            if kind == 'running':
-                self.lower.setCurrentWidget(self.output)
-        self.statusBar().showMessage(text[:160])
-
-    def log(self, level, text):
-        self.logs.appendPlainText(f'{datetime.now().astimezone():%H:%M:%S}  {level}  {redact(text)}')
-        logging.getLogger('codex_dispatcher').log(logging.WARNING if level == 'WARNING' else logging.ERROR if level == 'ERROR' else logging.INFO, redact(text))
+        if event.get('kind') in ('message', 'tool', 'status', 'checked'):
+            return
+        text = event.get('text', '')
+        self.statusBar().showMessage(text[:180])
+        if self.tray and event.get('kind') == 'error':
+            self.tray.showMessage('Codex Dispatcher', text[:180], QSystemTrayIcon.Warning)
+        self.refresh_snapshot()
 
     def open_window(self):
         self.showNormal()
@@ -477,10 +384,8 @@ class MainWindow(QMainWindow):
             for worker in self.workers:
                 self.controller.monitor.stop(worker.id)
         active = self.controller.queue.running() if self.ready else []
-        pending = self.controller._jobs - {'snapshot', '检查连接'}
-        if active or pending:
-            QMessageBox.information(self, '等待任务安全结束', '已停止后续监视。当前任务或后台操作仍在执行，应用将保持运行。\n'
-                                    '可在“停止监视”中请求安全停止当前任务，完成后再退出。')
+        if active or self.controller._jobs - {'snapshot', '检查连接'}:
+            QMessageBox.information(self, '会话仍在运行', '已停止监测。已通知的 agent 或后台操作仍在运行，结束后可退出；关闭窗口可驻留托盘。')
             return
         self._force_close = True
         self.close()
@@ -490,8 +395,7 @@ class MainWindow(QMainWindow):
             self.hide()
             event.ignore()
             return
-        if not self._force_close and (self.controller._jobs - {'snapshot', '检查连接'} or
-                                     self.ready and self.controller.queue.running()):
+        if not self._force_close and (self.controller._jobs - {'snapshot', '检查连接'} or self.ready and self.controller.queue.running()):
             event.ignore()
             self.quit_app()
             return
@@ -499,5 +403,7 @@ class MainWindow(QMainWindow):
         self.controller.shutdown()
         if self.tray:
             self.tray.hide()
+        self.editor.deleteLater()
+        self.history.deleteLater()
         event.accept()
         QApplication.instance().quit()

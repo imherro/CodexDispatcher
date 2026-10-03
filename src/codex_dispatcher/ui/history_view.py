@@ -37,8 +37,8 @@ class HistoryView(QWidget):
         self.table.doubleClicked.connect(self.details)
         layout.addWidget(self.table)
         actions = QHBoxLayout()
-        for title, function in [('详情 / Prompt / 回复', self.details), ('查看 Issue', self.open),
-                                ('复制 Thread ID', self.copy), ('重新派送', lambda: self.act(self.redispatch)),
+        for title, function in [('通知详情', self.details), ('查看 Issue', self.open),
+                                ('复制 Thread ID', self.copy), ('重新通知', lambda: self.act(self.redispatch)),
                                 ('检查恢复状态', lambda: self.act(self.recovery)), ('标记已处理', lambda: self.act(self.mark_handled))]:
             button = QPushButton(title)
             button.clicked.connect(function)
@@ -52,8 +52,8 @@ class HistoryView(QWidget):
         self.table.setRowCount(len(records))
         for row, record in enumerate(records):
             values = [record['dispatch_time'] or record['discovered_at'], record['worker_name'], record['repository'],
-                      '#' + str(record['issue_number']), record['target_thread_id'], record['status'],
-                      record['error'] or record['final_response'] or '']
+                      '#' + str(record['issue_number']), record['target_thread_id'], {'notified':'已通知','completed':'已通知','queued':'待通知','failed':'通知失败','recovery_required':'待确认'}.get(record['status'], record['status']),
+                      record['error'] or '']
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value.replace('\n', ' ')[:160])
                 item.setToolTip(value)
@@ -75,8 +75,8 @@ class HistoryView(QWidget):
     def details(self):
         record = self.current()
         if record:
-            text_dialog(self, '派送详情', f"状态：{record['status']}\nDispatch ID：{record['id']}\nTurn ID：{record['turn_id'] or ''}\n"
-                        f"错误：{record['error']}\n\n=== 派送 Prompt ===\n{record['prompt']}\n\n=== Codex 最终回复 ===\n{record['final_response']}")
+            text_dialog(self, '通知详情', f"状态：{record['status']}\n通知 ID：{record['id']}\nTurn ID：{record['turn_id'] or ''}\n"
+                        f"错误：{record['error']}\n\n=== 已发送通知 ===\n{record['prompt']}")
 
     def copy(self):
         record = self.current()

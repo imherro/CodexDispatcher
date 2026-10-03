@@ -90,10 +90,9 @@ def main():
                     runtime = subprocess.run([str(binary), '--version'], capture_output=True, text=True, timeout=20)
                     assert runtime.returncode == 0
                     controller.codex.check_connection()
-                    models = controller.codex.list_models()
                     return {'status':'passed', 'frozen':bool(getattr(sys, 'frozen', False)),
                             'gui_initialized':True, 'database_initialized':True, 'runtime':runtime.stdout.strip(),
-                            'authenticated':True, 'model_count':len(models), 'model_calls':0}
+                            'authenticated':True, 'model_calls':0}
                 window.run_job('packaged-smoke', check, lambda value: save_smoke(value),
                                on_error=lambda error: save_smoke(error=error))
             elif time.monotonic() - started > 120:

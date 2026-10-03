@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from codex_dispatcher.domain.models import DispatchError, Issue, RecoveryRequired, ThreadBusy, Worker, WorkerPaused, now
-from .template_service import build_task, validate_template
+from .notification_service import build_notification
 from .security import redact
 
 
@@ -12,10 +12,13 @@ class DispatchService:
         self.db, self.github, self.codex, self.emit = database, github, codex, emit
 
     def validate_worker(self, worker):
-        worker.validate()
-        validate_template(worker.prompt_template)
         self.codex.check_connection()
-        self.codex.validate_thread(worker.target_thread_id, worker.target_project, worker.allow_mismatch)
+        thread = self.codex.read_thread(worker.target_thread_id)
+        if thread.get("id") != worker.target_thread_id:
+            raise DispatchError("目标会话 ID 不一致")
+        worker.target_project = thread.get("cwd") or ""
+        worker.target_thread_name = thread.get("name") or ""
+        worker.validate()
         return worker
 
     def test_configuration(self, worker):
@@ -37,25 +40,11 @@ class DispatchService:
                 self.emit({'kind': 'discovered', 'worker_id': worker.id, 'text': f'发现 Issue #{issue.number}，已排队'})
         return identifiers
 
-    def dry_run(self, worker, *, use_normalizer=False):
-        prompts = []
-        for candidate in self.github.list_assigned_issues(worker):
-            if not candidate.matches(worker) or not self.db.eligible(worker, candidate):
-                continue
-            issue = self.github.get_issue(worker.repository, candidate.number)
-            if not issue.matches(worker):
-                continue
-            normalized = self.codex.normalize(issue, worker.dispatcher_model, worker.dispatcher_reasoning) \
-                if worker.dispatcher_enabled and use_normalizer else None
-            prompts.append({'issue': issue.number, 'project': worker.target_project,
-                            'thread_id': worker.target_thread_id, 'prompt': redact(build_task(worker, issue, normalized))})
-        return prompts
-
     def process_record(self, identifier, can_send=lambda: True):
         record = self.db.record(identifier)
         if not record or not self.db.claim(identifier):
             return 'blocked'
-        worker = Worker(**json.loads(record['worker_snapshot']))
+        worker = Worker.from_dict(json.loads(record['worker_snapshot']))
         try:
             # Re-read assignment immediately before delivery; label/assignee may have changed while queued.
             issue = self.github.get_issue(record['repository'], record['issue_number'])
@@ -68,27 +57,21 @@ class DispatchService:
             worker.validate()
             if not can_send():
                 raise WorkerPaused('监视已停止，任务保留在队列中。')
-            normalized = self.codex.normalize(issue, worker.dispatcher_model, worker.dispatcher_reasoning) \
-                if worker.dispatcher_enabled else None
-            prompt = build_task(worker, issue, normalized, dispatch_id=identifier)
+            prompt = build_notification(worker.repository, issue.number, identifier)
             self.db.update_record(identifier, prompt=prompt, issue_updated_at=issue.updated_at,
-                                  issue_snapshot=json.dumps(issue.to_dict(), ensure_ascii=False))
+                                  issue_snapshot=json.dumps(issue.metadata(), ensure_ascii=False))
             def started(turn_id):
-                self.db.update_record(identifier, status='dispatched', turn_id=turn_id, dispatch_time=now(), error='')
-                self.emit({'kind': 'running', 'worker_id': worker.id, 'record_id': identifier,
-                           'text': f'Issue #{issue.number} 已派送，Codex Running'})
-            def event(data):
-                self.emit({**data, 'worker_id': worker.id, 'record_id': identifier})
-            result = self.codex.send_task(worker.target_thread_id, prompt, worker.target_project,
-                                         allow_mismatch=worker.allow_mismatch,
-                                         model=worker.target_model if worker.override_target_model else None,
-                                         on_started=started, on_event=event, can_send=can_send)
-            status = 'completed' if result.status == 'completed' else 'failed'
-            self.db.update_record(identifier, status=status, finished_at=now(), final_response=result.final_response,
-                                  error=result.error or ('' if status == 'completed' else f'Turn {result.status}'))
-            self.emit({'kind': status, 'worker_id': worker.id, 'record_id': identifier,
-                       'text': f'Issue #{issue.number}: {status}'})
-            return status
+                self.db.update_record(identifier, status='notified', turn_id=turn_id, dispatch_time=now(), error='')
+                self.emit({'kind': 'notified', 'worker_id': worker.id, 'record_id': identifier,
+                           'text': f'Issue #{issue.number} 已通知目标会话'})
+            self.codex.send_task(worker.target_thread_id, prompt, worker.target_project,
+                                 trusted=True, on_started=started, can_send=can_send)
+            if self.db.record(identifier)['status'] != 'notified':
+                raise RecoveryRequired('没有收到通知回执，需要检查原会话；禁止自动重发。')
+            # Keep the runtime alive until its turn ends, without relaying output or
+            # interpreting the agent's work. Notification success is its ACK above.
+            self.db.update_record(identifier, finished_at=now())
+            return 'notified'
         except WorkerPaused as exc:
             self.db.update_record(identifier, status='queued', error=str(exc))
             return 'paused'
@@ -97,18 +80,25 @@ class DispatchService:
             status = 'queued' if attempts < 6 else 'failed'
             self.db.update_record(identifier, status=status, attempts=attempts, error=str(exc),
                                   **({'finished_at': now()} if status == 'failed' else {}))
-            self.emit({'kind': 'waiting', 'worker_id': worker.id, 'text': str(exc)})
+            if record['error'] != str(exc) or status == 'failed':
+                self.emit({'kind': 'waiting', 'worker_id': worker.id, 'text': str(exc)})
             return 'busy' if status == 'queued' else 'failed'
         except RecoveryRequired as exc:
+            current = self.db.record(identifier)
+            if current['status'] == 'notified':
+                self.db.update_record(identifier, error='通知已确认；agent 运行状态无法继续读取，请检查原会话。')
+                self.emit({'kind': 'error', 'worker_id': worker.id, 'record_id': identifier,
+                           'text': '通知已确认，agent 连接状态不确定，请在通知记录中检查。'})
+                return 'notified'
             self.db.update_record(identifier, status='recovery_required', error=str(exc))
             self.emit({'kind': 'error', 'worker_id': worker.id, 'record_id': identifier, 'text': str(exc)})
             return 'recovery_required'
         except Exception as exc:
             # If ack was persisted, failure is uncertain until the turn is inspected.
             current = self.db.record(identifier)
-            status = 'recovery_required' if current['status'] == 'dispatched' else 'failed'
+            status = 'notified' if current['status'] == 'notified' else 'recovery_required' if current['status'] == 'dispatched' else 'failed'
             self.db.update_record(identifier, status=status, error=redact(str(exc)),
-                                  **({'finished_at': now()} if status == 'failed' else {}))
+                                  **({'finished_at': now()} if status in ('failed', 'notified') else {}))
             self.emit({'kind': 'error', 'worker_id': worker.id, 'record_id': identifier, 'text': redact(str(exc))})
             return status
 
@@ -126,20 +116,17 @@ class DispatchService:
 
     def check_recovery(self, identifier):
         record = self.db.record(identifier)
-        if record['status'] != 'recovery_required':
+        if record['status'] != 'recovery_required' and not (record['status'] == 'notified' and not record['finished_at']):
             raise DispatchError('此任务无需恢复检查')
         if not record['turn_id']:
-            return '发送结果未知，未保存 Turn ID。请查看目标会话中的 Dispatch ID，再标记已处理或手动重新派送。'
+            return '发送结果未知，未保存 Turn ID。请查看目标会话中的通知 ID，再标记已处理或手动重新派送。'
         turn = self.codex.inspect_turn(record['target_thread_id'], record['turn_id'])
         if not turn:
             return '暂未在会话中找到该 Turn；仍保持恢复检查，不自动重新发送。'
         # A second process can expose synthetic interrupted history for an actually live turn.
         # Only a persisted completed turn is a positive recovery signal after restart.
         if turn['status'] == 'completed':
-            texts = [x.get('text', '') for x in turn.get('items', [])
-                     if x.get('type') == 'agentMessage' and x.get('phase') in (None, 'final_answer')]
-            self.db.update_record(identifier, status='completed', finished_at=now(),
-                                  final_response=texts[-1] if texts else '', error='')
+            self.db.update_record(identifier, status='notified', finished_at=now(), error='')
             self.codex.release_terminal(record['target_thread_id'])
             return '已确认 Codex Turn completed，历史状态已恢复。'
         return f"Turn 状态：{turn['status']}。请到原会话确认；任务保持恢复检查。"

@@ -6,9 +6,11 @@ try {
     if (-not (Test-Path -LiteralPath $pythonExecutable)) { throw 'Create .venv and pip install -e ".[dev]" first.' }
     & $pythonExecutable -m pytest -q
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed; packaging stopped.' }
-    & $pythonExecutable -m PyInstaller --noconfirm CodexDispatcher.spec
+    $appVersion = & $pythonExecutable -c 'from codex_dispatcher import __version__; print(__version__)'
+    $outputDirectory = Join-Path 'dist' "v$appVersion"
+    & $pythonExecutable -m PyInstaller --noconfirm --distpath $outputDirectory CodexDispatcher.spec
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }
-    & $pythonExecutable scripts/package_release.py
+    & $pythonExecutable scripts/package_release.py --folder (Join-Path $outputDirectory 'CodexDispatcher')
     if ($LASTEXITCODE -ne 0) { throw 'ZIP packaging failed.' }
-    Write-Output 'Built dist/CodexDispatcher/CodexDispatcher.exe. Distribute the whole directory.'
+    Write-Output "Built $outputDirectory/CodexDispatcher/CodexDispatcher.exe. Distribute the whole directory."
 } finally { Pop-Location }

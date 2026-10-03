@@ -3,17 +3,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-import json
-import re
 from pathlib import Path
-import tempfile
 import threading
 import time
 
 from openai_codex import CodexConfig, JsonRpcError, TransportClosedError
 from openai_codex.client import CodexClient
-from openai_codex.generated.v2_all import ConfigReadResponse, ThreadSourceKind
-from pydantic import RootModel
+from openai_codex.generated.v2_all import ThreadSourceKind
 
 from codex_dispatcher.domain.models import DispatchError, RecoveryRequired, ThreadBusy, ThreadInfo, WorkerPaused, same_path
 from .security import redact
@@ -21,10 +17,6 @@ from .security import redact
 
 def wire(value):
     return value.model_dump(mode='json', by_alias=True) if hasattr(value, 'model_dump') else value
-
-
-class RawResponse(RootModel[dict]):
-    """Preserve experimental permission provenance omitted from stable SDK types."""
 
 
 @dataclass
@@ -104,10 +96,6 @@ class CodexService:
                 raise DispatchError('Codex 未登录，请在 Codex Desktop 或 codex login 中完成登录')
             return True
 
-    def list_models(self):
-        with self._reader() as client:
-            return wire(self._bounded(client.model_list, on_timeout=client.close)).get('data', [])
-
     def list_threads(self, project_path=None):
         with self._reader() as client:
             params = {'limit': 100, 'sourceKinds': [x.value for x in ThreadSourceKind], 'sortKey': 'updated_at'}
@@ -144,20 +132,29 @@ class CodexService:
         if data.get('status', {}).get('type') == 'active' or any(t.get('status') == 'inProgress' for t in data.get('turns', [])):
             raise ThreadBusy('目标会话正在运行，任务已排队。')
 
+    @staticmethod
+    def _rpc_error(exc):
+        message = exc.message.casefold()
+        if any(marker in message for marker in ('busy', 'already running', 'conflict', 'active writer', 'another writer')):
+            return ThreadBusy('目标会话被另一个 Codex 进程占用，暂不能派送。'
+                              '请等待原任务完成，并在原应用中释放该会话。')
+        return DispatchError(redact(str(exc)))
+
     def validate_thread(self, thread_id, project_path, allow_mismatch=False):
-        data = self.read_thread(thread_id, include_turns=True)
+        # Configuration validation must not acquire another app's writer lease.
+        # A readable saved Thread can be configured while Desktop owns it; only
+        # the actual dispatch attempts resume and handles the lease conflict.
+        data = self.read_thread(thread_id)
+        if data.get('id') != thread_id:
+            raise DispatchError('Codex 返回的 Thread ID 与配置不一致')
         self._check_project(data, project_path, allow_mismatch)
-        self._check_busy(data)
-        with self._reader() as client:
-            resumed = wire(self._bounded(lambda: client.thread_resume(thread_id), on_timeout=client.close))
-            self._check_project(resumed['thread'], project_path, allow_mismatch)
-            return ThreadInfo.from_wire(resumed['thread'])
+        return ThreadInfo.from_wire(data)
 
     def resume_thread(self, thread_id, project_path, allow_mismatch=False):
         # Read-only validation facade; a dispatch owns its client for the whole turn.
         return self.validate_thread(thread_id, project_path, allow_mismatch)
 
-    def send_task(self, thread_id, task, project_path, *, allow_mismatch=False, model=None,
+    def send_task(self, thread_id, task, project_path, *, allow_mismatch=False,
                   on_started=lambda tid: None, on_event=lambda event: None, trusted=False, can_send=lambda: True):
         client = self._new_client()
         submitted = False
@@ -167,17 +164,15 @@ class CodexService:
             data = wire(self._bounded(lambda: client.thread_read(thread_id, include_turns=True), on_timeout=client.close))['thread']
             self._check_project(data, project_path, allow_mismatch)
             self._check_busy(data)
-            overrides = {'model': model} if model else None
-            resumed = wire(self._bounded(lambda: client.thread_resume(thread_id, overrides), on_timeout=client.close))
+            resumed = wire(self._bounded(lambda: client.thread_resume(thread_id), on_timeout=client.close))
             if resumed['thread']['id'] != thread_id:
                 raise DispatchError('Codex 恢复的 Thread ID 与配置不一致')
             self._check_project(resumed['thread'], project_path, allow_mismatch)
             self._check_busy(resumed['thread'])
             if not can_send():
                 raise WorkerPaused('监视已停止，任务保留在队列中。')
-            # Equivalent to official ExternalMessage's wire form. Task is tool authority,
-            # never developer instructions. A test message explicitly clicked by the user
-            # may use user input; production GitHub tasks always use ExternalMessage.
+            # Production uses a fixed user-authorized wake-up instruction.
+            # It contains only a validated locator, never Issue body/title/comments.
             params = None if trusted else {'toolOutput': {'name': 'github_issue', 'namespace': 'codex_dispatcher', 'output': task}}
             submitted = True  # persist intent before crossing the non-idempotent RPC boundary
             try:
@@ -185,9 +180,7 @@ class CodexService:
             except JsonRpcError as exc:
                 # Explicit rejection is safe to queue, unlike timeouts / transport drops.
                 submitted = False
-                if 'busy' in exc.message.casefold() or 'already running' in exc.message.casefold() or 'conflict' in exc.message.casefold():
-                    raise ThreadBusy(redact(exc.message)) from exc
-                raise DispatchError(redact(str(exc))) from exc
+                raise self._rpc_error(exc) from exc
             turn_id = started['turn']['id']
             with self._guard:
                 self._active[thread_id] = (client, turn_id)
@@ -205,6 +198,8 @@ class CodexService:
                 raise RecoveryRequired(redact(f'需要恢复检查：{exc}')) from exc
             if isinstance(exc, DispatchError):
                 raise
+            if isinstance(exc, JsonRpcError):
+                raise self._rpc_error(exc) from exc
             raise DispatchError(redact(str(exc))) from exc
         finally:
             if not submitted or terminal:
@@ -282,66 +277,3 @@ class CodexService:
     def active_threads(self):
         with self._guard:
             return list(self._active)
-
-    def normalize(self, issue, model, reasoning='low'):
-        # Separate runtime & ephemeral thread. These overrides NEVER touch a target thread.
-        with self._reader() as reader:
-            cfg = wire(self._bounded(lambda: reader.request('config/read', {'includeLayers': False},
-                                                           response_model=ConfigReadResponse), on_timeout=reader.close))['config']
-        with tempfile.TemporaryDirectory(prefix='codex-dispatcher-normalize-') as cwd:
-            overrides = ['features.shell_tool=false', 'features.unified_exec=false', 'features.apps=false',
-                         'features.multi_agent=false', 'features.hooks=false', 'features.remote_plugin=false',
-                         'features.code_mode.enabled=false', 'web_search="disabled"',
-                         'project_doc_max_bytes=0', 'features.skill_mcp_dependency_install=false']
-            if cfg.get('sandbox_mode') is not None:
-                raise DispatchError('当前全局 sandbox_mode 与隔离权限配置冲突，请关闭预处理或移除旧配置。')
-            overrides += ['default_permissions="dispatcher-normalize"',
-                          'permissions.dispatcher-normalize={filesystem={":root"="deny", ":workspace_roots"={"."="read"}}, network={enabled=false}}']
-            for key in (cfg.get('mcp_servers') or {}):
-                if not re.fullmatch(r'[A-Za-z0-9_-]+', key):
-                    raise DispatchError('MCP 名称不支持安全隔离，请关闭任务整理：' + key)
-                overrides.append('mcp_servers.' + key + '.enabled=false')
-            for key in (cfg.get('plugins') or {}):
-                if '.' in key or '\"' in key:
-                    raise DispatchError('Plugin 名称不支持安全隔离，请关闭任务整理：' + key)
-                overrides.append('plugins.' + key + '.enabled=false')
-            config = CodexConfig(codex_bin=self.config.codex_bin, config_overrides=tuple(overrides), cwd=cwd,
-                                 client_name='codex_dispatcher_normalize', experimental_api=True)
-            client = self._new_client(config)
-            try:
-                self._bounded(lambda: (client.start(), client.initialize()), on_timeout=client.close)
-                started = wire(self._bounded(lambda: client.request('thread/start', {'cwd': cwd, 'model': model, 'ephemeral': True,
-                    'approvalPolicy': 'never',
-                    'developerInstructions': 'Only normalize the supplied Issue into JSON. No tools, filesystem, Git, tests, or browsing. Assignment is authoritative. Always dispatch=true.'}, response_model=RawResponse), on_timeout=client.close))
-                if (started.get('activePermissionProfile') or {}).get('id') != 'dispatcher-normalize':
-                    raise DispatchError('Runtime 未确认整理会话的隔离权限，已取消整理。')
-                thread_id = started['thread']['id']
-                schema = {'type': 'object', 'properties': {
-                    'dispatch': {'type': 'boolean'}, 'summary': {'type': 'string'},
-                    **{key: {'type': 'array', 'items': {'type': 'string'}}
-                       for key in ('requirements', 'acceptance_criteria', 'warnings')}},
-                    'required': ['dispatch', 'summary', 'requirements', 'acceptance_criteria', 'warnings'],
-                    'additionalProperties': False}
-                turn = wire(self._bounded(lambda: client.turn_start(thread_id, [], {
-                    'toolOutput': {'name': 'github_issue', 'output': json.dumps(issue.to_dict(), ensure_ascii=False)},
-                    'effort': reasoning, 'outputSchema': schema})))
-                def guard(method, payload):
-                    if method in ('item/started', 'item/completed') and payload.get('item', {}).get('type') not in (
-                            'userMessage', 'agentMessage', 'reasoning', 'compaction', 'contextCompaction',
-                            'functionCallOutput'):
-                        client.turn_interrupt(thread_id, turn['turn']['id'])
-                        raise DispatchError('任务整理模型尝试调用工具（' + str(payload.get('item', {}).get('type')) +
-                                            '），已中断；请关闭预处理后重试')
-                result = self._consume(client, turn['turn']['id'], lambda event: None, guard)
-                if result.status != 'completed':
-                    raise DispatchError('任务整理失败：' + result.error)
-                normalized = json.loads(result.final_response)
-                if not isinstance(normalized.get('summary'), str) or any(
-                    not isinstance(normalized.get(k), list) or not all(isinstance(x, str) for x in normalized[k])
-                    for k in ('requirements', 'acceptance_criteria', 'warnings')):
-                    raise DispatchError('任务整理模型返回结构无效')
-                normalized['dispatch'] = True  # authority is the configured GitHub rule
-                return normalized
-            finally:
-                # Temporary normalization is allowed to stop; it has no target project access.
-                client.close()

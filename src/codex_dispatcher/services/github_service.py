@@ -67,7 +67,7 @@ class GitHubService:
         # gh paginates up to this bound; surface saturation rather than silently losing backlog.
         data = self._run(['issue', 'list', '--repo', repository, '--state', 'open',
                           flag, worker.assignment_value, '--limit', '1000', '--json',
-                          'number,title,body,url,updatedAt,labels,assignees,state'])
+                          'number,url,updatedAt,labels,assignees,state'])
         if len(data) >= 1000:
             raise DispatchError('候选 Issue 达到 1000 条查询上限，请收窄分配规则后重新检查')
         return sorted((Issue.from_github(repository, row) for row in data), key=lambda issue: issue.number)
@@ -75,17 +75,8 @@ class GitHubService:
     def get_issue(self, repository, number):
         repository = normalize_repository(repository)
         data = self._run(['issue', 'view', str(int(number)), '--repo', repository, '--json',
-                          'number,title,body,url,updatedAt,labels,assignees,state'])
-        issue = Issue.from_github(repository, data)
-        issue.comments = self.get_comments(repository, number)
-        return issue
-
-    def get_comments(self, repository, number):
-        # REST pagination avoids the GraphQL first-page comments limit.
-        pages = self._run(['api', '--paginate', '--slurp',
-                           f'repos/{normalize_repository(repository)}/issues/{int(number)}/comments'])
-        return [{'author': {'login': item.get('user', {}).get('login', '')}, 'body': item.get('body', '')}
-                for page in pages for item in page]
+                          'number,url,updatedAt,labels,assignees,state'])
+        return Issue.from_github(repository, data)
 
     @staticmethod
     def open_issue_in_browser(repository, number):

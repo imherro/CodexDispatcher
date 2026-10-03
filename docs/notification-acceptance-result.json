@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "status": "passed",
+  "github_writes": 0,
+  "dispatcher_model_calls": 0,
+  "target_thread_id": "01a0ff98-3cbc-7ab1-b9e1-7eba6413eb04",
+  "empty_poll_agent_turns": 0,
+  "duplicate_poll_agent_turns": 0,
+  "notification_agent_turns": 2,
+  "setup_agent_turns": 1,
+  "agent_reads_issues_independently": true,
+  "project_unchanged": true,
+  "records": [
+    {
+      "issue_number": 2,
+      "target_thread_id": "01a0ff98-3cbc-7ab1-b9e1-7eba6413eb04",
+      "turn_id": "01a0ff98-b3f6-7802-8257-57413e74d33d",
+      "status": "notified"
+    },
+    {
+      "issue_number": 1,
+      "target_thread_id": "01a0ff98-3cbc-7ab1-b9e1-7eba6413eb04",
+      "turn_id": "01a0ff98-6e44-7ce0-9cea-933b3cbac064",
+      "status": "notified"
+    }
+  ]
+}

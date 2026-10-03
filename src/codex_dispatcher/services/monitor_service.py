@@ -27,7 +27,7 @@ class MonitorService:
             self._workers[worker.id] = stop
             self.queue.allow(worker.id, worker.target_thread_id)
             threading.Thread(target=self._loop, args=(worker, stop), daemon=True,
-                             name='monitor-' + worker.worker_name).start()
+                             name='monitor-' + worker.name).start()
         self.emit({'kind': 'monitoring', 'worker_id': worker.id, 'text': 'Monitoring'})
 
     def _loop(self, worker, stop):
@@ -60,9 +60,8 @@ class MonitorService:
             if not self._closed and not (stop and stop.is_set()):
                 self.queue.allow(worker.id, worker.target_thread_id)
             state = {'status': 'Monitoring' if self.is_monitoring(worker.id) else 'Paused',
-                     'last_check': now(), 'last_result': f'{len(identifiers)} 个新任务' if identifiers else '无新任务（0 模型调用）'}
+                     'last_check': now(), 'last_result': f'{len(identifiers)} 个新待办' if identifiers else self.dispatch.db.runtime().get(worker.id, {}).get('last_result', '—')}
             self.dispatch.db.set_runtime(worker.id, state)
-            self.emit({'kind': 'checked', 'worker_id': worker.id, **state, 'text': state['last_result']})
             return identifiers
         finally:
             check.release()
@@ -77,7 +76,8 @@ class MonitorService:
         if stop:
             stop.set()
         self.queue.pause(worker_id)
-        self.emit({'kind': 'paused', 'worker_id': worker_id, 'text': 'Paused；已运行的任务继续执行'})
+        if stop:
+            self.emit({'kind': 'paused', 'worker_id': worker_id, 'text': '已停止监测；已通知的 agent 继续执行'})
 
     def close(self):
         self._closed = True

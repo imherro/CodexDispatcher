@@ -1,5 +1,6 @@
 """Package the built folder and public documentation; never copies local app data."""
 from pathlib import Path
+import argparse
 import hashlib
 import json
 import shutil
@@ -7,12 +8,24 @@ import zipfile
 from codex_dispatcher import __version__
 
 root = Path(__file__).resolve().parent.parent
-folder = root / 'dist' / 'CodexDispatcher'
+parser = argparse.ArgumentParser()
+parser.add_argument('--folder', default=str(root / 'dist' / 'CodexDispatcher'))
+args = parser.parse_args()
+folder = Path(args.folder).resolve()
 executable = folder / 'CodexDispatcher.exe'
 if not executable.is_file():
     raise SystemExit('Run PyInstaller first')
 shutil.copy2(root / 'README.md', folder / 'README.md')
-shutil.copytree(root / 'docs', folder / 'docs', dirs_exist_ok=True)
+docs = folder / 'docs'
+docs.mkdir(exist_ok=True)
+for name in (f'release-{__version__}.md', 'notification-acceptance-result.json', 'packaged-smoke-result.json'):
+    source = root / 'docs' / name
+    if source.is_file():
+        shutil.copy2(source, docs / name)
+images = docs / 'screenshots'
+images.mkdir(exist_ok=True)
+for name in ('main-window.png', 'worker-config.png'):
+    shutil.copy2(root / 'docs' / 'screenshots' / name, images / name)
 archive = folder.parent / f'CodexDispatcher-{__version__}-windows-x64.zip'
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as output:
     for path in sorted(folder.rglob('*')):

@@ -23,10 +23,12 @@ def main():
         QFontDatabase.addApplicationFont(str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / font))
     with tempfile.TemporaryDirectory(prefix='dispatcher-ui-smoke-') as directory:
         db = Database(Path(directory) / 'test.db')
-        worker = Worker(name='示例项目 / codex-worker-1', worker_name='codex-worker-1', repository='example/project',
+        worker = Worker(name='示例项目 / codex-worker-1', repository='example/project',
                         assignment_value='agent:codex-worker-1', target_project=directory,
-                        target_thread_id='019example-long-lived-thread')
+                        target_thread_id='019example-long-lived-thread', target_thread_name='修电脑项目会话')
         db.save_worker(worker)
+        from dataclasses import replace
+        db.save_worker(replace(worker, id='worker-two', name='网站 agent', repository='example/website', assignment_value='agent:website', target_thread_id='019example-website-thread', target_thread_name='网站开发会话'))
         github, codex = Mock(), Mock()
         codex.active_threads.return_value = []
         controller = AppController(db.path, github, codex)
@@ -38,14 +40,15 @@ def main():
             time.sleep(.02)
         assert window.ready
         controller.emit({'kind':'monitoring','worker_id':worker.id,'text':'Monitoring · 检查间隔 5 分钟'})
-        controller.emit({'kind':'completed','worker_id':worker.id,'text':'Issue #12 completed · 再次轮询不会重复派送'})
+        controller.emit({'kind':'notified','worker_id':worker.id,'text':'Issue #12 已通知目标会话'})
         application.processEvents()
         output = Path('docs/screenshots')
         output.mkdir(parents=True, exist_ok=True)
         assert window.grab().save(str(output / 'main-window.png'))
-        window.editor.tabs.setCurrentIndex(1)
+        window.edit_selected()
         application.processEvents()
-        assert window.grab().save(str(output / 'advanced-settings.png'))
+        assert window.editor_dialog.grab().save(str(output / 'worker-config.png'))
+        window.editor_dialog.reject()
         window._force_close = True
         window.close()
         print('GUI rendered successfully with fake services; 0 live Codex calls.')

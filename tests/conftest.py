@@ -12,7 +12,7 @@ from codex_dispatcher.services.dispatch_service import DispatchService
 
 @pytest.fixture
 def worker(tmp_path):
-    return Worker(name='Test / worker-1', worker_name='worker-1', repository='owner/repo',
+    return Worker(name='Test / worker-1', repository='owner/repo',
                   assignment_value='agent:worker-1', target_project=str(tmp_path), target_thread_id='existing-thread-ABC')
 
 
@@ -31,8 +31,7 @@ def core(tmp_path, worker, issue):
     github.get_issue.return_value = issue
     codex = Mock()
     codex.active_threads.return_value = []
-    codex.normalize.return_value = {'dispatch': True, 'summary': 'normalized', 'requirements': ['fix'],
-                                  'acceptance_criteria': ['test'], 'warnings': []}
+    codex.read_thread.return_value = {'id': worker.target_thread_id, 'cwd': worker.target_project}
     def send(thread_id, task, project, **kwargs):
         kwargs['on_started']('turn-123')
         return RunResult('turn-123', 'completed', 'done')

@@ -73,12 +73,12 @@ class Database:
 
     def workers(self):
         with self.connection() as db:
-            return [Worker(**json.loads(r['config'])) for r in db.execute('SELECT config FROM workers ORDER BY created_at')]
+            return [Worker.from_dict(json.loads(r['config'])) for r in db.execute('SELECT config FROM workers ORDER BY created_at')]
 
     def get_worker(self, worker_id):
         with self.connection() as db:
             row = db.execute('SELECT config FROM workers WHERE id=?', (worker_id,)).fetchone()
-            return Worker(**json.loads(row['config'])) if row else None
+            return Worker.from_dict(json.loads(row['config'])) if row else None
 
     def eligible(self, worker: Worker, issue: Issue):
         with self.connection() as db:
@@ -94,7 +94,7 @@ class Database:
         if any(r['status'] in ('discovered', 'queued', 'dispatching', 'dispatched', 'recovery_required') for r in rows):
             return False
         # Failure and ignored rows also require explicit retry; a poll never loops on failure.
-        return worker.redispatch_updated and all(issue.updated_at > r['issue_updated_at'] for r in rows)
+        return False
 
     def reserve(self, worker: Worker, issue: Issue, *, force=False):
         with self.connection() as db:
@@ -103,7 +103,8 @@ class Database:
                 return None
             if force and db.execute('''SELECT 1 FROM dispatch_records WHERE worker_id=?
                     AND repository=? COLLATE NOCASE AND issue_number=?
-                    AND status IN ('discovered','queued','dispatching','dispatched','recovery_required')''',
+                    AND (status IN ('discovered','queued','dispatching','dispatched','recovery_required')
+                         OR (status='notified' AND finished_at IS NULL))''',
                     (worker.id, issue.repository, issue.number)).fetchone():
                 raise DispatchError('任务仍在排队、运行或等待恢复检查。请先检查或标记已处理，再重新派送。')
             identifier = str(uuid.uuid4())
@@ -114,7 +115,7 @@ class Database:
                 (identifier, worker.id, issue.repository, issue.number, issue.updated_at,
                  worker.target_thread_id, 'queued', now(),
                  json.dumps(worker.to_dict(), ensure_ascii=False),
-                 redact(json.dumps(issue.to_dict(), ensure_ascii=False))))
+                 json.dumps(issue.metadata(), ensure_ascii=False)))
             return identifier
 
     def update_record(self, identifier, **changes):
@@ -150,7 +151,7 @@ class Database:
             if not record or record['status'] != 'queued':
                 return False
             if db.execute('''SELECT 1 FROM dispatch_records WHERE target_thread_id=? AND id<>?
-                    AND status IN ('dispatching','dispatched','recovery_required')''',
+                    AND (status IN ('dispatching','dispatched','recovery_required') OR (status='notified' AND finished_at IS NULL))''',
                     (record['target_thread_id'], identifier)).fetchone():
                 return False
             db.execute("UPDATE dispatch_records SET status='dispatching', started_at=? WHERE id=?", (now(), identifier))
@@ -159,10 +160,12 @@ class Database:
     def thread_blocked(self, thread_id):
         with self.connection() as db:
             return bool(db.execute('''SELECT 1 FROM dispatch_records WHERE target_thread_id=?
-                    AND status IN ('recovery_required','dispatching','dispatched') LIMIT 1''', (thread_id,)).fetchone())
+                    AND (status IN ('recovery_required','dispatching','dispatched') OR (status='notified' AND finished_at IS NULL)) LIMIT 1''', (thread_id,)).fetchone())
 
     def recover_startup(self):
         with self.connection() as db:
+            # An acknowledged notification is never replayed after restart.
+            db.execute("UPDATE dispatch_records SET finished_at=? WHERE status='notified' AND finished_at IS NULL", (now(),))
             return db.execute('''UPDATE dispatch_records SET status='recovery_required',
                 error='需要恢复检查：上次进程退出时任务可能已提交，禁止自动重复发送。'
                 WHERE status IN ('dispatching','dispatched')''').rowcount
