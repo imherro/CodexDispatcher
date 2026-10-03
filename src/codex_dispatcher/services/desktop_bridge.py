@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import partial
 from pathlib import Path
 import struct
 import time
@@ -25,7 +26,8 @@ def register_desktop_context(directory: Path):
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / 'desktop-bridge.json'
         temporary = path.with_suffix('.tmp')
-        temporary.write_text(json.dumps({'caller_thread_id': caller}), encoding='utf-8')
+        temporary.write_text(json.dumps({'caller_thread_id': caller,
+                                        'pipe_path': os.environ['CODEX_APP_TOOLS_PIPE_PATH']}), encoding='utf-8')
         temporary.replace(path)
     path = directory / 'desktop-bridge.json'
     if path.is_file():
@@ -35,8 +37,8 @@ def register_desktop_context(directory: Path):
     return None
 
 
-def desktop_endpoint():
-    supplied = os.environ.get('CODEX_APP_TOOLS_PIPE_PATH')
+def desktop_endpoint(preferred=None):
+    supplied = preferred or os.environ.get('CODEX_APP_TOOLS_PIPE_PATH')
     # The desktop pipe changes after restarting Codex. Discover only its known
     # local pipe prefix, never scan TCP endpoints or read authentication tokens.
     try:
@@ -45,19 +47,34 @@ def desktop_endpoint():
     except OSError as exc:
         raise ThreadBusy('Codex 桌面桥接暂不可用，通知保留在队列中。', keep_queued=True) from exc
     if supplied and supplied.rsplit('\\', 1)[-1] in pipes:
-        return supplied
+        return '\\\\.\\pipe\\' + supplied.rsplit('\\', 1)[-1]
     if not pipes:
         raise ThreadBusy('Codex 桌面应用尚未打开，通知保留在队列中。', keep_queued=True)
     if len(pipes) != 1:
-        raise DispatchError('没有找到唯一的 Codex 桌面桥接，请打开 Codex 桌面应用后重试。')
+        # Browser control uses the same pipe prefix. Probe only the read-only
+        # catalog; never send a notification until the app-tools pipe is known.
+        matches = []
+        for name in pipes[:8]:
+            endpoint = '\\\\.\\pipe\\' + name
+            try:
+                catalog = pipe_request('tools/list', {'threadStartKind': 'all'},
+                                       preferred_endpoint=endpoint, timeout=1)
+                if any(tool.get('name') == 'send_message_to_thread' and tool.get('namespace') == 'codex_app'
+                       for tool in catalog.get('tools', [])):
+                    matches.append(endpoint)
+            except DispatchError:
+                continue
+        if len(matches) == 1:
+            return matches[0]
+        raise DispatchError('没有找到唯一的 Codex 桌面通知接口，请打开 Codex 桌面应用后重试。')
     return '\\\\.\\pipe\\' + pipes[0]
 
 
-def pipe_request(method, params, *, submitting=False, timeout=40):
+def pipe_request(method, params, *, submitting=False, timeout=40, preferred_endpoint=None):
     import ctypes
     import msvcrt
     from ctypes import wintypes
-    endpoint = desktop_endpoint()
+    endpoint = desktop_endpoint(preferred_endpoint)
     payload = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params},
                          ensure_ascii=False).encode('utf-8')
     if len(payload) > MAX_FRAME:
@@ -122,10 +139,10 @@ def pipe_request(method, params, *, submitting=False, timeout=40):
 
 class DesktopCodexService:
     """Metadata through the SDK, delivery through the original desktop owner."""
-    def __init__(self, caller_thread_id, *, sdk=None, request=pipe_request):
+    def __init__(self, caller_thread_id, *, sdk=None, request=None, endpoint_hint=None):
         self.caller_thread_id = caller_thread_id
         self.sdk = sdk or CodexService()
-        self.request = request
+        self.request = request or partial(pipe_request, preferred_endpoint=endpoint_hint)
 
     def __getattr__(self, name):
         return getattr(self.sdk, name)
@@ -186,4 +203,7 @@ class DesktopCodexService:
 
 def create_codex_service(directory):
     caller = register_desktop_context(Path(directory)) if os.name == 'nt' else None
-    return DesktopCodexService(caller) if caller else CodexService()
+    if caller:
+        config = json.loads((Path(directory) / 'desktop-bridge.json').read_text(encoding='utf-8'))
+        return DesktopCodexService(caller, endpoint_hint=config.get('pipe_path'))
+    return CodexService()

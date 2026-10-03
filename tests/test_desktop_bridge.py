@@ -98,7 +98,7 @@ def test_bridge_registration_uses_only_provided_context_and_no_pipe_secret(tmp_p
     monkeypatch.setenv('CODEX_THREAD_ID', caller)
     monkeypatch.setenv('CODEX_APP_TOOLS_PIPE_PATH', 'local-pipe')
     assert register_desktop_context(tmp_path) == caller
-    assert json.loads((tmp_path / 'desktop-bridge.json').read_text()) == {'caller_thread_id': caller}
+    assert json.loads((tmp_path / 'desktop-bridge.json').read_text()) == {'caller_thread_id': caller, 'pipe_path':'local-pipe'}
     monkeypatch.delenv('CODEX_THREAD_ID')
     monkeypatch.delenv('CODEX_APP_TOOLS_PIPE_PATH')
     assert register_desktop_context(tmp_path) == caller
@@ -112,3 +112,13 @@ def test_desktop_restart_discovers_new_pipe_without_reusing_stale_endpoint(monke
     with pytest.raises(ThreadBusy) as caught:
         desktop_endpoint()
     assert caught.value.keep_queued
+
+
+def test_pipe_catalog_distinguishes_browser_control_from_desktop_notifications(monkeypatch):
+    monkeypatch.delenv('CODEX_APP_TOOLS_PIPE_PATH', raising=False)
+    monkeypatch.setattr('os.listdir', lambda _: ['codex-browser-use-browser', 'codex-browser-use-app'])
+    def catalog(method, params, **kwargs):
+        assert method == 'tools/list' and not kwargs.get('submitting')
+        return {'tools': [{'name':'send_message_to_thread','namespace':'codex_app'}]} if kwargs['preferred_endpoint'].endswith('-app') else {'tools': []}
+    monkeypatch.setattr('codex_dispatcher.services.desktop_bridge.pipe_request', catalog)
+    assert desktop_endpoint() == '\\\\.\\pipe\\codex-browser-use-app'
