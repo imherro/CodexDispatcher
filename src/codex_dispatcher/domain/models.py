@@ -7,6 +7,7 @@ import os
 import re
 import uuid
 from urllib.parse import urlparse
+from .notification_format import DEFAULT_NOTIFICATION_TEMPLATE, validate_notification_template
 
 
 def now() -> str:
@@ -61,6 +62,7 @@ class Worker:
     target_thread_name: str = ''
     ignored_labels: list[str] = field(default_factory=lambda: ['agent:running', 'agent:done', 'agent:blocked'])
     poll_interval: int = 5
+    notification_template: str = DEFAULT_NOTIFICATION_TEMPLATE
     created_at: str = field(default_factory=now)
     updated_at: str = field(default_factory=now)
 
@@ -77,6 +79,7 @@ class Worker:
             self.assignment_value = normalize_mention(self.assignment_value)
         if not 1 <= self.poll_interval <= 60:
             raise ValueError('检查间隔必须为 1–60 分钟')
+        validate_notification_template(self.notification_template)
         if not self.target_project or not Path(self.target_project).is_dir():
             raise ValueError('目标项目目录不存在')
         self.updated_at = now()
@@ -159,6 +162,9 @@ class DispatchError(Exception):
 
 class ThreadBusy(DispatchError):
     """Known busy/conflict before any new task was accepted."""
+    def __init__(self, message, *, keep_queued=False):
+        super().__init__(message)
+        self.keep_queued = keep_queued
 
 
 class RecoveryRequired(DispatchError):

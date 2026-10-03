@@ -130,14 +130,16 @@ class CodexService:
     @staticmethod
     def _check_busy(data):
         if data.get('status', {}).get('type') == 'active' or any(t.get('status') == 'inProgress' for t in data.get('turns', [])):
-            raise ThreadBusy('目标会话正在运行，任务已排队。')
+            raise ThreadBusy('目标会话正在运行，任务已排队。', keep_queued=True)
 
     @staticmethod
     def _rpc_error(exc):
         message = exc.message.casefold()
-        if any(marker in message for marker in ('busy', 'already running', 'conflict', 'active writer', 'another writer')):
-            return ThreadBusy('目标会话被另一个 Codex 进程占用，暂不能派送。'
-                              '请等待原任务完成，并在原应用中释放该会话。')
+        if any(marker in message for marker in ('active writer', 'another writer')):
+            return ThreadBusy('目标会话的写入权由 Codex 桌面应用或其他进程持有，空闲时也可能被占用。'
+                              '请启用桌面桥接，向原应用发送通知。')
+        if any(marker in message for marker in ('busy', 'already running', 'conflict')):
+            return ThreadBusy('目标会话暂不能接收通知，任务已排队。')
         return DispatchError(redact(str(exc)))
 
     def validate_thread(self, thread_id, project_path, allow_mismatch=False):

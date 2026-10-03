@@ -18,6 +18,15 @@ def text_dialog(parent, title, text):
     dialog.exec()
 
 
+def notification_details(record):
+    acknowledged = record['status'] in ('notified', 'completed', 'dispatched') and bool(
+        record.get('turn_id') or record.get('dispatch_time'))
+    title = '已发送通知' if acknowledged else '已准备通知（尚未确认发送）'
+    receipt = ('Codex 已返回 Turn ID' if record.get('turn_id') else '桌面应用已确认接收，回合 ID 尚未返回') if acknowledged else '尚无接收回执'
+    return (f"状态：{record['status']}\n通知 ID：{record['id']}\nTurn ID：{record['turn_id'] or ''}\n"
+            f"接收回执：{receipt}\n错误：{record['error']}\n\n=== {title} ===\n{record['prompt']}")
+
+
 class HistoryView(QWidget):
     redispatch = Signal(str)
     recovery = Signal(str)
@@ -75,8 +84,7 @@ class HistoryView(QWidget):
     def details(self):
         record = self.current()
         if record:
-            text_dialog(self, '通知详情', f"状态：{record['status']}\n通知 ID：{record['id']}\nTurn ID：{record['turn_id'] or ''}\n"
-                        f"错误：{record['error']}\n\n=== 已发送通知 ===\n{record['prompt']}")
+            text_dialog(self, '通知详情', notification_details(record))
 
     def copy(self):
         record = self.current()

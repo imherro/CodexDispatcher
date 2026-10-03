@@ -3,7 +3,7 @@ import logging
 
 from PySide6.QtCore import QObject, Signal
 
-from codex_dispatcher.services.codex_service import CodexService
+from codex_dispatcher.services.desktop_bridge import create_codex_service
 from codex_dispatcher.services.dispatch_service import DispatchService
 from codex_dispatcher.services.github_service import GitHubService
 from codex_dispatcher.services.monitor_service import MonitorService
@@ -20,7 +20,7 @@ class AppController(QObject):
         super().__init__()
         self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix='dispatcher-ui')
         self.db = None
-        self.data_path, self.github, self.codex = data_path, github or GitHubService(), codex or CodexService()
+        self.data_path, self.github, self.codex = data_path, github or GitHubService(), codex
         self.dispatch = self.queue = self.monitor = None
         self._jobs = set()
         self.closing = False
@@ -46,6 +46,8 @@ class AppController(QObject):
     def initialize(self):
         def init():
             self.db = Database(self.data_path)
+            if self.codex is None:
+                self.codex = create_codex_service(self.db.path.parent)
             recovery = self.db.recover_startup()
             self.dispatch = DispatchService(self.db, self.github, self.codex, self.emit)
             self.queue = ThreadQueue(self.dispatch, self.emit)

@@ -127,3 +127,39 @@ def test_no_ack_cannot_claim_notification_success(core, worker):
 def test_notification_locator_validation(repository, number):
     with pytest.raises(ValueError):
         build_notification(repository, number, '4dff84b8-bd9f-438e-9550-b7a51b720c06')
+
+
+def test_custom_format_is_frozen_with_worker_and_only_uses_metadata(core, worker, issue):
+    worker.notification_template = '任务 {repository} #{issue_number}：{issue_url}\n自行处理{source}。ID={notification_id}'
+    core.db.save_worker(worker)
+    identifier = core.service.discover(worker)[0]
+    worker.notification_template = '后改 {issue_url} {notification_id}'
+    core.db.save_worker(worker)
+    assert core.service.process_record(identifier) == 'notified'
+    prompt = core.codex.send_task.call_args.args[1]
+    assert prompt.startswith('任务 owner/repo #1：https://github.com/owner/repo/issues/1')
+    assert '后改' not in prompt and identifier in prompt
+
+
+@pytest.mark.parametrize('template', ['', '{issue_url}', '{notification_id}',
+    '{issue_url} {notification_id} {body}', '{issue_url} {notification_id.__class__}',
+    '{issue_url} {notification_id!r}', '{issue_url:>40} {notification_id}', '{issue_url'])
+def test_invalid_format_cannot_submit(template):
+    with pytest.raises(ValueError):
+        build_notification('owner/repo', 1, '4dff84b8-bd9f-438e-9550-b7a51b720c06', template=template)
+
+
+def test_comment_link_works_in_custom_format():
+    prompt = build_notification('owner/repo', 2, '4dff84b8-bd9f-438e-9550-b7a51b720c06',
+        comment_id=123, template='{notification_id} {issue_url} {source} {{原文}}')
+    assert '#issuecomment-123' in prompt and '该条评论及所属 Issue' in prompt and '{原文}' in prompt
+
+
+def test_history_does_not_label_pending_prompt_as_sent():
+    from codex_dispatcher.ui.history_view import notification_details
+    record = {'id':'notice','status':'queued','turn_id':None,'dispatch_time':None,'error':'busy','prompt':'ready'}
+    assert '已发送通知' not in notification_details(record)
+    assert '尚无接收回执' in notification_details(record)
+    record.update(status='notified', dispatch_time='2026-10-03')
+    assert '已发送通知' in notification_details(record)
+    assert '桌面应用已确认接收' in notification_details(record)

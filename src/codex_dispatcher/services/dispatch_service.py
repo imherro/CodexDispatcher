@@ -65,7 +65,8 @@ class DispatchService:
             worker.validate()
             if not can_send():
                 raise WorkerPaused('监视已停止，任务保留在队列中。')
-            prompt = build_notification(worker.repository, issue.number, identifier, comment_id=issue.comment_id)
+            prompt = build_notification(worker.repository, issue.number, identifier, comment_id=issue.comment_id,
+                                        template=worker.notification_template)
             self.db.update_record(identifier, prompt=prompt, issue_updated_at=issue.updated_at,
                                   issue_snapshot=json.dumps(issue.metadata(), ensure_ascii=False))
             def started(turn_id):
@@ -85,7 +86,7 @@ class DispatchService:
             return 'paused'
         except ThreadBusy as exc:
             attempts = record['attempts'] + 1
-            status = 'queued' if attempts < 6 else 'failed'
+            status = 'queued' if exc.keep_queued or attempts < 6 else 'failed'
             self.db.update_record(identifier, status=status, attempts=attempts, error=str(exc),
                                   **({'finished_at': now()} if status == 'failed' else {}))
             if record['error'] != str(exc) or status == 'failed':

@@ -62,7 +62,7 @@ class ThreadQueue:
                 if result in ('busy', 'paused', 'blocked'):
                     attempts = self.dispatch.db.record(row['id'])['attempts']
                     with self._wake:
-                        self._wake.wait(timeout=min(5 * 2 ** attempts, 160))
+                        self._wake.wait(timeout=min(5 * 2 ** min(attempts, 5), 160))
             except Exception as exc:
                 self.emit({'kind': 'error', 'text': '队列已暂停：' + str(exc)})
                 with self._wake:

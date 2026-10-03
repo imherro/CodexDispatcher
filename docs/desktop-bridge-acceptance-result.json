@@ -1,0 +1,24 @@
+{
+  "version": "0.4.0",
+  "status": "failed",
+  "dispatcher_model_calls": 0,
+  "setup_agent_turns": 1,
+  "temporary_comments": [
+    5967261272,
+    5967262234
+  ],
+  "busy_notification_persisted": true,
+  "queued_notification_delivered_when_idle": true,
+  "error": "Agent did not independently read both comments",
+  "deleted_temporary_comments": [
+    5967261272,
+    5967262234
+  ],
+  "github_writes": 4,
+  "delivery_status": "passed",
+  "agent_read_status": "blocked_by_network_proxy",
+  "target_thread_id": "01a100ea-e436-7a02-91a4-9f5fc8d9e28e",
+  "notification_count": 2,
+  "original_context_preserved": true,
+  "fabricated_turn_ids": 0
+}

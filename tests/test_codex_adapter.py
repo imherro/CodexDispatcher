@@ -95,7 +95,7 @@ def test_active_writer_rejection_retries_without_submission(worker, stage):
     setattr(client, 'thread_resume' if stage == 'resume' else 'turn_start', conflict)
     service = CodexService(client_factory=lambda **kw: client)
     ack = []
-    with pytest.raises(ThreadBusy, match='另一个 Codex 进程'):
+    with pytest.raises(ThreadBusy, match='写入权'):
         service.send_task(worker.target_thread_id, 'task', worker.target_project, on_started=ack.append)
     assert not ack
     assert client.closed

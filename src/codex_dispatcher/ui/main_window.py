@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from html import escape
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import Qt, QTimer, QPointF, QSize
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap, QPen, QPolygonF
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QHBoxLayout,
     QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QSystemTrayIcon,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QToolButton, QHeaderView)
 from codex_dispatcher import __version__
 from codex_dispatcher.domain.models import Worker
 from .history_view import HistoryView
@@ -31,6 +31,31 @@ def app_icon():
     return QIcon(pixmap)
 
 
+def action_icon(kind, color='#233043'):
+    pixmap = QPixmap(48, 48)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.scale(2, 2)
+    painter.setPen(QPen(QColor(color), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.setBrush(QColor(color))
+    if kind == 'start':
+        painter.drawPolygon(QPolygonF([QPointF(8, 5), QPointF(19, 12), QPointF(8, 19)]))
+    elif kind == 'stop':
+        painter.drawRoundedRect(6, 6, 12, 12, 1, 1)
+    elif kind == 'edit':
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPolygon(QPolygonF([QPointF(5, 15), QPointF(15, 5), QPointF(19, 9),
+                                      QPointF(9, 19), QPointF(4, 20)]))
+        painter.drawLine(13, 7, 17, 11)
+    else:
+        painter.setBrush(Qt.NoBrush)
+        painter.drawArc(5, 5, 14, 14, 35 * 16, 290 * 16)
+        painter.drawPolyline(QPolygonF([QPointF(19, 4), QPointF(19, 10), QPointF(13, 10)]))
+    painter.end()
+    return QIcon(pixmap)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, controller, *, tray_enabled=True):
         super().__init__()
@@ -46,8 +71,8 @@ class MainWindow(QMainWindow):
         self.editor.refresh_repositories.connect(self.refresh_repositories)
         self.setWindowTitle('Codex Dispatcher v' + __version__)
         self.setWindowIcon(app_icon())
-        self.resize(1240, 570)
-        self.setMinimumSize(1080, 440)
+        self.resize(1080, 570)
+        self.setMinimumSize(980, 440)
         self.setStyleSheet("""
             QMainWindow { background: #f4f6f8; }
             QWidget { font-family: "Segoe UI", "Microsoft YaHei UI", "SimHei"; font-size: 13px; color: #233043; }
@@ -57,6 +82,11 @@ class MainWindow(QMainWindow):
             QPushButton#primary { background: #176b63; color: white; border-color: #176b63; }
             QPushButton#primary:disabled, QPushButton#danger:disabled { background: #eef1f4; color: #8895a5; border-color: #ced6df; }
             QPushButton#danger { background: #b42318; color: white; border-color: #b42318; }
+            QToolButton { background: white; border: 1px solid #ced6df; border-radius: 6px; padding: 0; }
+            QToolButton:hover { background: #eaf1f5; }
+            QToolButton#primary { background: #176b63; border-color: #176b63; }
+            QToolButton#danger { background: #b42318; border-color: #b42318; }
+            QToolButton:disabled { background: #eef1f4; border-color: #ced6df; }
             QLineEdit, QComboBox, QSpinBox { background: white; border: 1px solid #ced6df; border-radius: 4px; padding: 6px; }
             QTableWidget { background: white; border: 1px solid #d9e0e8; selection-background-color: #e3f1ee; selection-color: #233043; }
             QHeaderView::section { background: #edf1f5; border: none; padding: 10px; font-weight: 600; }
@@ -103,8 +133,8 @@ class MainWindow(QMainWindow):
         self.worker_table.setSelectionMode(QTableWidget.SingleSelection)
         self.worker_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.worker_table.verticalHeader().hide()
-        self.worker_table.horizontalHeader().setStretchLastSection(True)
-        for col, width in enumerate((205, 140, 165, 80, 85, 125, 290)):
+        self.worker_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for col, width in enumerate((205, 140, 165, 80, 85, 125, 118)):
             self.worker_table.setColumnWidth(col, width)
         self.worker_table.itemSelectionChanged.connect(self.select_worker)
         self.worker_table.doubleClicked.connect(self.edit_selected)
@@ -227,8 +257,13 @@ class MainWindow(QMainWindow):
                 for key, label, callback in (('edit', '编辑', self.edit_worker),
                                              ('monitor', '开始监测', self.toggle_worker),
                                              ('check', '立即检查', self.check_worker)):
-                    button = QPushButton(label)
-                    button.setStyleSheet('padding: 7px 9px;')
+                    button = QToolButton()
+                    button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+                    button.setFixedSize(32, 32)
+                    button.setIconSize(QSize(20, 20))
+                    button.setIcon(action_icon(key))
+                    button.setToolTip(label)
+                    button.setAccessibleName(label)
                     button.clicked.connect(lambda checked=False, wid=worker.id, action=callback: action(wid))
                     buttons[key] = button
                     actions.addWidget(button)
@@ -258,7 +293,7 @@ class MainWindow(QMainWindow):
         self.editor.load(worker)
         dialog = QDialog(self)
         dialog.setWindowTitle('配置 Worker')
-        dialog.resize(650, 350)
+        dialog.resize(700, 650)
         layout = QVBoxLayout(dialog)
         layout.addWidget(self.editor)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -293,7 +328,7 @@ class MainWindow(QMainWindow):
     def save_worker(self):
         worker = self.editor.collect()
         if self.controller.monitor.is_monitoring(worker.id) or any(r['worker_id'] == worker.id and
-            (r['status'] in ('queued', 'dispatching', 'dispatched', 'recovery_required') or r['status'] == 'notified' and not r['finished_at']) for r in self.records):
+            (r['status'] in ('dispatching', 'dispatched', 'recovery_required') or r['status'] == 'notified' and not r['finished_at']) for r in self.records):
             QMessageBox.information(self, '暂不能修改', '请先停止监测，并等待已通知会话结束、处理待确认记录。')
             return
         def save():
@@ -353,10 +388,14 @@ class MainWindow(QMainWindow):
             stopping = 'stop:' + worker.id in self.controller._jobs
             checking = 'check:' + worker.id in self.controller._jobs
             button = buttons['monitor']
-            button.setText('正在开始…' if starting else '正在停止…' if stopping else '停止监测' if monitoring else '开始监测')
+            label = '正在开始…' if starting else '正在停止…' if stopping else '停止监测' if monitoring else '开始监测'
+            button.setToolTip(label)
+            button.setAccessibleName(label)
+            button.setIcon(action_icon('stop' if monitoring else 'start', '#ffffff'))
             button.setEnabled(self.ready and worker.enabled and not starting and not stopping)
             buttons['edit'].setEnabled(self.ready and not starting and not stopping and not checking)
-            buttons['check'].setText('检查中…' if checking else '立即检查')
+            buttons['check'].setToolTip('检查中…' if checking else '立即检查：查询并通知新待办，无需开启持续监测。')
+            buttons['check'].setAccessibleName('检查中…' if checking else '立即检查')
             buttons['check'].setEnabled(self.ready and worker.enabled and not checking and not starting and not stopping)
             style = 'danger' if monitoring else 'primary'
             if button.objectName() != style:

@@ -1,7 +1,9 @@
 from dataclasses import replace
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QWidget, QPlainTextEdit
 from codex_dispatcher.domain.models import Worker
+from codex_dispatcher.domain.notification_format import DEFAULT_NOTIFICATION_TEMPLATE
+from codex_dispatcher.services.notification_service import build_notification
 
 
 class WorkerEditor(QWidget):
@@ -55,6 +57,25 @@ class WorkerEditor(QWidget):
         interval.setRange(1, 60)
         interval.setSuffix(' 分钟')
         form.addRow('检查间隔', interval)
+        self.fields['notification_template'] = template = QPlainTextEdit()
+        template.setMinimumHeight(100)
+        template.setMaximumHeight(140)
+        template.textChanged.connect(self.update_preview)
+        form.addRow('通知格式', template)
+        hint = QLabel('必填变量：{issue_url}、{notification_id}\n可选：{repository}、{issue_number}、{source}')
+        hint.setWordWrap(True)
+        hint.setToolTip('修改影响后续新通知；已排队通知保留发现时的格式。')
+        reset = QPushButton('恢复默认格式')
+        reset.clicked.connect(lambda: template.setPlainText(DEFAULT_NOTIFICATION_TEMPLATE))
+        row = QHBoxLayout()
+        row.addWidget(hint, 1)
+        row.addWidget(reset)
+        form.addRow('', row)
+        self.preview = QPlainTextEdit()
+        self.preview.setReadOnly(True)
+        self.preview.setMaximumHeight(100)
+        form.addRow('发送预览\n（示例 #1）', self.preview)
+        self.fields['repository'].currentIndexChanged.connect(self.update_preview)
         form.addRow('', QLabel('匹配新待办后，只通知此会话自行读取和处理 Issue。'))
         self.load(self.worker)
 
@@ -70,9 +91,23 @@ class WorkerEditor(QWidget):
                 if key == 'repository' and field.findData(value) == -1:
                     field.addItem(value or '请选择 GitHub 仓库', value)
                 field.setCurrentIndex(field.findData(value))
+            elif isinstance(field, QPlainTextEdit):
+                field.setPlainText(value)
             else:
                 field.setText(value)
         self.update_assignment_hint()
+        self.update_preview()
+
+    def update_preview(self):
+        if not hasattr(self, 'preview'):
+            return
+        try:
+            text = build_notification(self.fields['repository'].currentData() or 'owner/repository', 1,
+                                      '00000000-0000-0000-0000-000000000000',
+                                      template=self.fields['notification_template'].toPlainText())
+        except ValueError as exc:
+            text = '格式错误：' + str(exc)
+        self.preview.setPlainText(text)
 
     def update_assignment_hint(self):
         field = self.fields.get('assignment_value')
@@ -101,6 +136,8 @@ class WorkerEditor(QWidget):
                 values[key] = field.value()
             elif isinstance(field, QComboBox):
                 values[key] = field.currentData()
+            elif isinstance(field, QPlainTextEdit):
+                values[key] = field.toPlainText().strip()
             else:
                 values[key] = field.text().strip()
         return replace(self.worker, **values)
