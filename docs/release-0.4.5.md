@@ -5,4 +5,4 @@
 - 动画帧预先缓存，每 150 毫秒切换一次，不进行网络查询或模型调用。
 - 校验中发现时间差偶发超出 GitHub 请求上限，补充单次请求 45 秒硬上限。
 
-GUI 验收已验证隐藏窗口、多 Worker 启停和静态恢复；帧预览见 `screenshots/tray-animation-frames.png`。升级前从系统托盘退出旧版，再运行 `dist/v0.4.5/CodexDispatcher/CodexDispatcher.exe`。
+130 项测试通过，GUI 验收已验证隐藏窗口、多 Worker 启停和静态恢复；Windows 打包启动、数据库、内置 runtime、登录及桌面桥接配置读取通过。帧预览见 `screenshots/tray-animation-frames.png`。升级前从系统托盘退出旧版，再运行 `dist/v0.4.5/CodexDispatcher/CodexDispatcher.exe`。
