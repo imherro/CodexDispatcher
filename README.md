@@ -62,6 +62,14 @@ Dispatcher 没有任务整理模型，也没有额外模型判断调用。空轮
 
 每个 Worker 的编辑窗口可以修改通知格式，实时预览，并恢复默认格式。
 
+新建 Worker 和“恢复默认格式”使用以下模板。已有 Worker 保存的格式及已排队通知不自动覆盖；需要更换时点击“恢复默认格式”并保存。
+
+```text
+[Codex Dispatcher · {notification_id}]
+有分配给你的待办，请自行读取 #{issue_number} issue  {source}，执行、验证并及时回复issue。
+参考网址：{issue_url}
+```
+
 | 变量 | 含义 |
 |---|---|
 | `{issue_url}`（必填） | Issue 或触发评论的原文链接 |
@@ -100,7 +108,7 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.4.8/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
+构建输出为 `dist/v0.4.9/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
 默认测试使用 mock，不消耗真实模型额度，覆盖三种规则、评论去重、旧版迁移、图标按钮、格式验证与预览、桌面回执、持续忙碌排队及不确定发送恢复。
 
