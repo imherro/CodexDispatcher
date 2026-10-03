@@ -38,6 +38,8 @@ Windows 桌面通知器：多个 Worker 监测 GitHub 待办，通知对应的 C
 
 Dispatcher 只做文本匹配，给绑定会话发送该评论的链接，让 agent 自己读取和处理。不会把“汇报 IP 地址”转述成指令。名称前的 @ 可省略，名称后直接接中文也支持。完整名称匹配、不区分大小写；不会把更长名称、邮箱或路径中的文本当作点名。
 
+为避免 agent 自己的署名再次触发通知，评论以 `我是 @名称`、`我是 名称`、`I am 名称` 或 `I'm 名称` 开头且名称与该 Worker 完整匹配时，视为署名汇报并跳过。派送前也应用这条规则，已排队的旧汇报会标记为“已跳过”。这是明确的格式约定，不根据评论作者或语义推测；人类使用相同开头也会被跳过。正常任务请直接写 `@名称 请…` 或 `名称 请…`。该过滤仅作用于评论，不过滤 Issue 标题和正文。
+
 @ 规则每个 Worker 对同一 Issue 的标题 / 正文通知一次，对每条评论各通知一次。**同一 Issue 上的新评论再次点名可以再次触发**，重复轮询、重启以及编辑已通知的原评论都不会自动重发。首次开启会检查已有打开 Issue 中尚未通知的提及。匹配不解析 Markdown，因此引用或代码块中的完整点名也会匹配。
 
 Label / Assignee 每个 Worker 对同一仓库 / Issue 自动通知一次，Issue 更新不会自动重发。所有规则在发送前重新检查状态和分配；默认跳过 `agent:running`、`agent:done`、`agent:blocked`。
@@ -92,7 +94,7 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.4.5/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
+构建输出为 `dist/v0.4.6/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
 默认测试使用 mock，不消耗真实模型额度，覆盖三种规则、评论去重、旧版迁移、图标按钮、格式验证与预览、桌面回执、持续忙碌排队及不确定发送恢复。
 

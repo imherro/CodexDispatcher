@@ -49,6 +49,13 @@ def contains_mention(text: str, value: str) -> bool:
                      text or '', re.IGNORECASE) is not None
 
 
+def is_agent_report(text: str, value: str) -> bool:
+    """Recognize an explicit self-signature, not arbitrary completion prose."""
+    name = normalize_mention(value)
+    return re.match(r"\s*(?:我是\s*|I\s+am\s+|I'm\s+)[*_`]*@?" + re.escape(name)
+                    + r'(?![A-Za-z0-9_@-])', text or '', re.IGNORECASE) is not None
+
+
 @dataclass
 class Worker:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -128,6 +135,8 @@ class Issue:
         if {x.casefold() for x in self.labels} & {x.casefold() for x in worker.ignored_labels}:
             return False
         if worker.assignment_mode == 'mention':
+            if self.comment_id is not None and is_agent_report(self.body, worker.assignment_value):
+                return False
             return contains_mention(self.title + '\n' + self.body, worker.assignment_value)
         values = self.labels if worker.assignment_mode == 'label' else self.assignees
         return worker.assignment_value.casefold() in {x.casefold() for x in values}

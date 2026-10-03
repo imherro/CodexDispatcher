@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from codex_dispatcher.domain.models import DispatchError, Issue, RecoveryRequired, ThreadBusy, Worker, WorkerPaused, now
+from codex_dispatcher.domain.models import DispatchError, Issue, RecoveryRequired, ThreadBusy, Worker, WorkerPaused, now, is_agent_report
 from .notification_service import build_notification
 from .security import redact
 from .github_service import GitHubUnavailable
@@ -58,7 +58,10 @@ class DispatchService:
             # Re-read assignment immediately before delivery; label/assignee may have changed while queued.
             issue = self._read_source(worker, record['issue_number'], record['notification_key'])
             if not issue.matches(worker):
-                self.db.update_record(identifier, status='ignored', finished_at=now(), error='Issue 已关闭、取消分配或有忽略标签')
+                report = (worker.assignment_mode == 'mention' and issue.comment_id is not None
+                          and is_agent_report(issue.body, worker.assignment_value))
+                reason = '目标 agent 的署名汇报，不作为新任务' if report else 'Issue 已关闭、取消分配或有忽略标签'
+                self.db.update_record(identifier, status='ignored', finished_at=now(), error=reason)
                 return 'ignored'
             if self.db.get_worker(worker.id) and not self.db.get_worker(worker.id).enabled:
                 self.db.update_record(identifier, status='queued', error='Worker 已禁用')

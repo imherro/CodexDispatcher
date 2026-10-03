@@ -5,7 +5,7 @@ import threading
 from types import SimpleNamespace
 import pytest
 
-from codex_dispatcher.domain.models import Worker, contains_mention
+from codex_dispatcher.domain.models import Worker, contains_mention, is_agent_report
 from codex_dispatcher.services.github_service import GitHubService
 from codex_dispatcher.services.monitor_service import MonitorService
 from codex_dispatcher.services.notification_service import build_notification
@@ -79,6 +79,44 @@ def test_reply_matches_without_at_even_when_title_names_another_agent(worker):
         comment(11, number=4, text='codex-1070-rc 检查你提交的pr是否合并')]])
     worker = replace(worker, assignment_mode='mention', assignment_value='codex-1070-rc')
     assert [issue.comment_id for issue in github.list_assigned_issues(worker)] == [10, 11]
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('我是 @codex-1070-rc , 完成任务情况如下：请补充城市。', True),
+    ('我是 codex-1070-rc。已完成北京天气查询。', True),
+    ('我是 **codex-1070-rc**，已核实。', True),
+    ("I am @codex-1070-rc. Task complete.", True),
+    ('@codex-1070-rc 我要北京的天气', False),
+    ('codex-1070-rc检查 PR', False),
+    ('我是用户，请 codex-1070-rc 继续处理', False),
+    ('我是 codex-1070-rc-other，请 @codex-1070-rc 协助', False),
+])
+def test_only_explicit_target_self_signature_is_a_report(text, expected):
+    assert is_agent_report(text, 'codex-1070-rc') is expected
+
+
+def test_signed_reports_do_not_trigger_but_later_user_request_does(worker):
+    worker = replace(worker, assignment_mode='mention', assignment_value='codex-1070-rc')
+    github, _ = service([row(26, title='codex-1070-rc 汇报天气')], [[
+        comment(10, 26, '我是 @codex-1070-rc , 请补充城市。'),
+        comment(11, 26, '@codex-1070-rc 我要北京的天气'),
+        comment(12, 26, '我是 codex-1070-rc , 已查询北京天气。'),
+        comment(13, 26, 'codex-1070-rc 再查上海的天气'),
+    ]])
+    candidates = github.list_assigned_issues(worker)
+    assert [issue.notification_key for issue in candidates] == ['mention:issue', 'mention:comment:11', 'mention:comment:13']
+
+
+def test_old_queued_report_is_skipped_before_sending(core, worker):
+    worker = replace(worker, assignment_mode='mention', assignment_value='codex-1070-rc')
+    issue = replace(core.github.get_issue.return_value, title='', body='我是 @codex-1070-rc , 已完成。',
+                    comment_id=12, notification_key='mention:comment:12')
+    core.db.save_worker(worker)
+    identifier = core.db.reserve(worker, issue)
+    core.github.get_issue.return_value = issue
+    assert core.service.process_record(identifier) == 'ignored'
+    assert '署名汇报' in core.db.record(identifier)['error']
+    core.codex.send_task.assert_not_called()
 
 
 def test_comments_exclude_closed_issues_and_ignored_labels(worker):
