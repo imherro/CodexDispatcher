@@ -7,4 +7,6 @@
 
 130 项测试通过，GUI 独立验收通过。只读 GitHub 查询确认 RepairComputer #4 的回复 5969988460、5970029198 均可匹配；未发送真实通知或调用模型。
 
+Windows 打包启动检查通过，GUI、数据库、内置 Codex runtime、登录状态与桌面桥接配置读取正常。
+
 从系统托盘退出旧版，再运行 `dist/v0.4.4/CodexDispatcher/CodexDispatcher.exe`，已有配置与历史保留。升级后此前未通知的无 @ 名称提及也会成为候选。

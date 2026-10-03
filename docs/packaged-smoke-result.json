@@ -6,7 +6,7 @@
   "runtime": "codex-cli 0.160.0",
   "authenticated": true,
   "model_calls": 0,
-  "version": "0.4.3",
+  "version": "0.4.4",
   "desktop_bridge_without_executor_environment": true,
   "desktop_registration_loaded": true
 }
