@@ -16,6 +16,8 @@ class MonitorService:
         self._checks = {}
         self._next_checks = {}
         self._guard = threading.RLock()
+        self._wake = threading.Condition(self._guard)
+        self._configs = {}
         self._closed = False
 
     def start(self, worker):
@@ -28,19 +30,34 @@ class MonitorService:
                 return
             stop = threading.Event()
             self._workers[worker.id] = stop
+            self._configs[worker.id] = worker
             self._next_checks[worker.id] = time.monotonic()
             self.queue.allow(worker.id, worker.target_thread_id)
             threading.Thread(target=self._loop, args=(worker, stop), daemon=True,
                              name='monitor-' + worker.name).start()
         self.emit({'kind': 'monitoring', 'worker_id': worker.id, 'text': 'Monitoring'})
 
+    def update_worker(self, worker):
+        """Use saved configuration for future scans without interrupting a running scan/turn."""
+        if not worker.enabled:
+            self.stop(worker.id)
+            return
+        with self._wake:
+            if worker.id in self._workers:
+                self._configs[worker.id] = worker
+                self._next_checks[worker.id] = time.monotonic() + worker.poll_interval * 60
+                self._wake.notify_all()
+
     def _loop(self, worker, stop):
         failures = 0
         while not stop.is_set():
+            with self._guard:
+                if self._workers.get(worker.id) is not stop:
+                    return
+                worker = self._configs[worker.id]
             try:
                 self.check_now(worker, stop=stop)
                 failures = 0
-                delay = worker.poll_interval * 60
             except Exception as exc:
                 failures += 1
                 self.emit({'kind': 'error', 'worker_id': worker.id, 'text': redact(str(exc))})
@@ -48,11 +65,16 @@ class MonitorService:
                     self.stop(worker.id)
                     self.dispatch.db.set_runtime(worker.id, {'status': 'Error', 'last_result': redact(str(exc))})
                     break
-                delay = min(worker.poll_interval * 60 * 2 ** min(failures - 1, 6), 3600)
-            with self._guard:
+            with self._wake:
                 if self._workers.get(worker.id) is stop:
+                    latest = self._configs[worker.id]
+                    delay = min(latest.poll_interval * 60 * 2 ** min(max(failures - 1, 0), 6), 3600)
                     self._next_checks[worker.id] = time.monotonic() + delay
-            stop.wait(delay)
+                while self._workers.get(worker.id) is stop and not stop.is_set():
+                    remaining = self._next_checks[worker.id] - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._wake.wait(remaining)
 
     def countdown(self, worker_id):
         with self._guard:
@@ -75,6 +97,8 @@ class MonitorService:
             cancelled = lambda: self._closed or (stop and stop.is_set()) or (previous_monitor and previous_monitor.is_set())
             if cancelled():
                 return None if wait else []
+            with self._guard:
+                worker = self._configs.get(worker.id, worker)
             # Authorization to execute this manual check / monitor remains in queue until paused.
             identifiers = self.dispatch.discover(worker)
             if not cancelled():
@@ -91,11 +115,13 @@ class MonitorService:
             return worker_id in self._workers
 
     def stop(self, worker_id):
-        with self._guard:
+        with self._wake:
             stop = self._workers.pop(worker_id, None)
+            self._configs.pop(worker_id, None)
             self._next_checks.pop(worker_id, None)
-        if stop:
-            stop.set()
+            if stop:
+                stop.set()
+            self._wake.notify_all()
         self.queue.pause(worker_id)
         if stop:
             self.emit({'kind': 'paused', 'worker_id': worker_id, 'text': '已停止监测；已通知的 agent 继续执行'})

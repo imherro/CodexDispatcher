@@ -102,6 +102,8 @@ def main():
             time.sleep(.01)
         application.processEvents()
         assert window.editor_dialog.grab().save(str(output / 'worker-config.png'))
+        editor_height = window.editor_dialog.height()
+        assert editor_height <= 560
         assert window.editor.fields['assignment_mode'].currentText() == 'GitHub 账号指派'
         assert 'Assignees' in window.editor.assignment_hint.text()
         window.editor_dialog.reject()
@@ -163,7 +165,7 @@ def main():
         window._force_close = True
         window.close()
         report = {'version': __version__, 'status': 'passed', 'dark_system_palette': True,
-                  'editor_openings': 3, 'github_assignee_rule_visible': True, 'repository_eof_preserves_configuration': True,
+                  'editor_openings': 3, 'worker_dialog_height': editor_height, 'github_assignee_rule_visible': True, 'repository_eof_preserves_configuration': True,
                   'repository_refresh_recovery': True, 'history_and_details_openings': 2,
                   'complete_notification_readable': True, 'tray_animation_while_hidden': True,
                   'tray_animation_multi_worker_and_stop': True, 'model_calls': 0}

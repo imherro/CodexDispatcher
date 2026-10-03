@@ -147,6 +147,10 @@ class Database:
             return [dict(r) for r in db.execute('''SELECT * FROM dispatch_records WHERE target_thread_id=?
                     AND status='queued' ORDER BY discovered_at, rowid''', (thread_id,))]
 
+    def queued_threads(self, worker_id):
+        with self.connection() as db:
+            return [r[0] for r in db.execute("SELECT DISTINCT target_thread_id FROM dispatch_records WHERE worker_id=? AND status='queued'", (worker_id,))]
+
     def claim(self, identifier):
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')

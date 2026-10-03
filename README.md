@@ -20,6 +20,8 @@ Windows 桌面通知器：多个 Worker 监测 GitHub 待办，通知对应的 C
 
 编辑已有 Worker 且未更换 Agent 会话时，保存只做本机校验，不依赖 GitHub 或 Codex 联网。新建或更换会话时仍读取并验证目标会话；GitHub 仓库可访问性在开始监测时检查。GitHub 只读查询遇到 EOF、超时、连接重置或 HTTP 502/503/504 时最多尝试三次，共用 45 秒时间预算。持续断网时监测退避重试、待发送通知保留，恢复后继续。
 
+Worker 配置页采用紧凑行距，将检查间隔与启用开关放在同一行；小屏幕可上下滚动，保存按钮固定在底部。监测中、会话运行中或存在待确认通知时均可保存。新配置用于后续检查，监测倒计时按保存后的间隔重新计算；当前检查、已排队及已发送通知保留原配置和目标会话。保存不会立即扫描或中断 agent；需要立即检查时使用 Worker 的检查按钮。取消“启用此 Worker”并保存会停止该 Worker 的监测及后续派送，已发送的 agent 继续运行。
+
 关闭窗口可驻留托盘。停止监测只停止后续定时通知，已通知的 agent 继续执行。
 
 有 Worker 正在监测时，右下角系统托盘的 D 图标显示旋转光环，悬停可查看监测数量；窗口隐藏后动画继续。全部 Worker 停止监测后恢复静态图标。
@@ -98,7 +100,7 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.4.7/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
+构建输出为 `dist/v0.4.8/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
 默认测试使用 mock，不消耗真实模型额度，覆盖三种规则、评论去重、旧版迁移、图标按钮、格式验证与预览、桌面回执、持续忙碌排队及不确定发送恢复。
 

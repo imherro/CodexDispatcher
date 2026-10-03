@@ -176,6 +176,35 @@ def test_new_worker_defaults_to_mention_and_selectable_repository(app, tmp_path,
     close(app, window)
 
 
+@pytest.mark.parametrize('status', ['notified', 'recovery_required'])
+def test_save_while_monitoring_and_agent_running_is_allowed(app, tmp_path, worker, issue, monkeypatch, status):
+    monkeypatch.setattr(QMessageBox, 'information', lambda *a, **k: pytest.fail('Save must not be blocked'))
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *a, **k: pytest.fail(str(a)))
+    github, codex = services(worker)
+    controller = AppController(tmp_path / 'live-save.db', github, codex)
+    window = MainWindow(controller, tray_enabled=False)
+    window.show()
+    wait_until(app, lambda: window.ready and not controller._jobs)
+    controller.db.save_worker(worker)
+    identifier = controller.db.reserve(worker, issue)
+    controller.db.update_record(identifier, status=status)
+    window.apply_snapshot(controller.snapshot())
+    controller.monitor.start(worker)
+    wait_until(app, lambda: 0 < (controller.monitor.countdown(worker.id) or 0) <= 300)
+    window.open_editor(worker)
+    wait_until(app, lambda: not controller._jobs)
+    window.editor.fields['poll_interval'].setValue(2)
+    window.save_worker()
+    wait_until(app, lambda: window.editor_dialog is None and not controller._jobs)
+    assert controller.db.get_worker(worker.id).poll_interval == 2
+    assert controller.monitor.is_monitoring(worker.id)
+    assert 0 < controller.monitor.countdown(worker.id) <= 120
+    assert controller.db.record(identifier)['status'] == status
+    codex.interrupt.assert_not_called()
+    codex.send_task.assert_not_called()
+    close(app, window)
+
+
 def test_reopening_editor_keeps_form_visible_when_repository_refresh_fails(app, tmp_path, worker, monkeypatch):
     from codex_dispatcher.domain.models import DispatchError
     monkeypatch.setattr(QMessageBox, 'warning', lambda *a, **k: pytest.fail('Refresh must not open a blocking dialog'))

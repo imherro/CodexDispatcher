@@ -65,7 +65,7 @@ def test_network_failure_before_send_keeps_notice_then_sends_once(core, worker):
     core.codex.send_task.assert_called_once()
 
 
-def test_temporary_outage_does_not_stop_monitor_after_five_polls(core, worker):
+def test_temporary_outage_does_not_stop_monitor_after_five_polls(core, worker, monkeypatch):
     monitor = MonitorService(core.service, Mock())
     attempts = []
     def check(*args, **kwargs):
@@ -75,6 +75,11 @@ def test_temporary_outage_does_not_stop_monitor_after_five_polls(core, worker):
     monitor.check_now = check
     stop = Mock()
     stop.is_set.side_effect = lambda: len(attempts) >= 7
+    monitor._workers[worker.id] = stop
+    monitor._configs[worker.id] = worker
+    clock = [100.0]
+    monkeypatch.setattr('codex_dispatcher.services.monitor_service.time.monotonic', lambda: clock[0])
+    monkeypatch.setattr(monitor._wake, 'wait', lambda delay: clock.__setitem__(0, clock[0] + delay))
     monitor.stop = Mock()
     monitor._loop(worker, stop)
     assert len(attempts) == 7

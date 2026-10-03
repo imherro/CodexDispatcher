@@ -12,10 +12,14 @@ class WorkerEditor(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setStyleSheet('QLineEdit, QComboBox, QSpinBox { padding: 3px 6px; } QPushButton { padding: 4px 10px; }')
         self.worker, self.fields = Worker(), {}
         self.thread_names = {}
         form = QFormLayout(self)
-        form.setSpacing(12)
+        form.setContentsMargins(4, 4, 4, 4)
+        form.setVerticalSpacing(6)
+        form.setHorizontalSpacing(10)
+        form.setFormAlignment(Qt.AlignTop)
         for key, title, placeholder in (
             ('name', 'Worker 名称', '例如：修电脑 agent'),
             ('repository', 'GitHub 仓库', 'owner/repository 或 GitHub 仓库地址'),
@@ -68,14 +72,16 @@ class WorkerEditor(QWidget):
             else:
                 form.addRow(title, field)
         self.fields['enabled'] = enabled = QCheckBox('启用此 Worker')
-        form.addRow('', enabled)
         self.fields['poll_interval'] = interval = QSpinBox()
         interval.setRange(1, 60)
         interval.setSuffix(' 分钟')
-        form.addRow('检查间隔', interval)
+        row = QHBoxLayout()
+        row.addWidget(interval, 1)
+        row.addWidget(enabled)
+        form.addRow('检查间隔', row)
         self.fields['notification_template'] = template = QPlainTextEdit()
-        template.setMinimumHeight(100)
-        template.setMaximumHeight(140)
+        template.setMinimumHeight(76)
+        template.setMaximumHeight(100)
         template.textChanged.connect(self.update_preview)
         form.addRow('通知格式', template)
         hint = QLabel('必填变量：{issue_url}、{notification_id}\n可选：{repository}、{issue_number}、{source}')
@@ -89,10 +95,10 @@ class WorkerEditor(QWidget):
         form.addRow('', row)
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
-        self.preview.setMaximumHeight(100)
+        self.preview.setFixedHeight(70)
         form.addRow('发送预览\n（示例 #1）', self.preview)
         self.fields['repository'].currentIndexChanged.connect(self.update_preview)
-        form.addRow('', QLabel('匹配新待办后，只通知此会话自行读取和处理 Issue。'))
+        form.addRow('', QLabel('保存用于后续检查；已有通知保留原配置。'))
         self.load(self.worker)
 
     def load(self, worker):

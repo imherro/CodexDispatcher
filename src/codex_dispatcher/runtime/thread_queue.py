@@ -18,13 +18,17 @@ class ThreadQueue:
         self._processing = set()
 
     def allow(self, worker_id, thread_id):
+        # Saved configuration can change the destination while old notices retain theirs.
+        # Resume those consumers too, including after restarting the application.
+        destinations = {thread_id, *self.dispatch.db.queued_threads(worker_id)}
         with self._wake:
             self._allowed.add(worker_id)
-            if thread_id not in self._threads or not self._threads[thread_id].is_alive():
-                consumer = threading.Thread(target=self._consume, args=(thread_id,), daemon=True,
-                                            name='dispatch-' + thread_id[:12])
-                self._threads[thread_id] = consumer
-                consumer.start()
+            for destination in destinations:
+                if destination not in self._threads or not self._threads[destination].is_alive():
+                    consumer = threading.Thread(target=self._consume, args=(destination,), daemon=True,
+                                                name='dispatch-' + destination[:12])
+                    self._threads[destination] = consumer
+                    consumer.start()
             self._wake.notify_all()
 
     def pause(self, worker_id):

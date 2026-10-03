@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QTimer, QPointF, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap, QPen, QPolygonF
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QHBoxLayout,
     QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QSystemTrayIcon,
-    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QToolButton, QHeaderView)
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QToolButton, QHeaderView, QScrollArea, QFrame)
 from codex_dispatcher import __version__
 from codex_dispatcher.domain.models import Worker
 from .history_view import HistoryView
@@ -340,9 +340,16 @@ class MainWindow(QMainWindow):
         self.editor.load(worker)
         dialog = QDialog(self)
         dialog.setWindowTitle('配置 Worker')
-        dialog.resize(700, 650)
+        dialog.resize(720, min(560, self.screen().availableGeometry().height() - 80))
         layout = QVBoxLayout(dialog)
-        layout.addWidget(self.editor)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(self.editor)
+        layout.addWidget(scroll)
         # Closing hides the reused editor explicitly; reparenting does not
         # clear that hidden state when another configuration dialog opens.
         self.editor.show()
@@ -353,6 +360,7 @@ class MainWindow(QMainWindow):
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
         def closed():
+            scroll.takeWidget()
             self.editor.setParent(None)
             self.editor.hide()
             self.editor_dialog = None
@@ -381,10 +389,6 @@ class MainWindow(QMainWindow):
 
     def save_worker(self):
         worker = self.editor.collect()
-        if self.controller.monitor.is_monitoring(worker.id) or any(r['worker_id'] == worker.id and
-            (r['status'] in ('dispatching', 'dispatched', 'recovery_required') or r['status'] == 'notified' and not r['finished_at']) for r in self.records):
-            QMessageBox.information(self, '暂不能修改', '请先停止监测，并等待已通知会话结束、处理待确认记录。')
-            return
         def save():
             existing = self.controller.db.get_worker(worker.id)
             if existing and existing.target_thread_id == worker.target_thread_id:
@@ -394,13 +398,14 @@ class MainWindow(QMainWindow):
             else:
                 self.controller.dispatch.validate_worker(worker)
             self.controller.db.save_worker(worker)
+            self.controller.monitor.update_worker(worker)
             return worker
         def saved(value):
             self._selected_id = value.id
             self.editor.load(value)
             if self.editor_dialog:
                 self.editor_dialog.accept()
-            self.statusBar().showMessage('Worker 已保存')
+            self.statusBar().showMessage('Worker 已保存，后续检查使用新配置；已有通知保留原配置')
         self.run_job('save', save, saved)
 
     def refresh_threads(self, project=''):
@@ -452,7 +457,7 @@ class MainWindow(QMainWindow):
             button.setAccessibleName(label)
             button.setIcon(action_icon('stop' if monitoring else 'start', '#ffffff'))
             button.setEnabled(self.ready and worker.enabled and not starting and not stopping)
-            buttons['edit'].setEnabled(self.ready and not starting and not stopping and not checking)
+            buttons['edit'].setEnabled(self.ready and not starting and not stopping)
             buttons['check'].setToolTip('检查中…' if checking else '立即检查：查询并通知新待办，无需开启持续监测。')
             buttons['check'].setAccessibleName('检查中…' if checking else '立即检查')
             buttons['check'].setEnabled(self.ready and worker.enabled and not checking and not starting and not stopping)
