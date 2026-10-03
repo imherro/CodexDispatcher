@@ -283,7 +283,7 @@ class MainWindow(QMainWindow):
                     result += ' · 待确认'
             seconds = self.runtime.get(worker.id, {}).get('countdown')
             countdown = '检查中…' if 'check:' + worker.id in self.controller._jobs or seconds == 0 else '—' if seconds is None else f'{seconds // 60:02d}:{seconds % 60:02d}'
-            rule = '@' + worker.assignment_value.removeprefix('@') if worker.assignment_mode == 'mention' else worker.assignment_mode + ': ' + worker.assignment_value
+            rule = '@' + worker.assignment_value.removeprefix('@') if worker.assignment_mode == 'mention' else ('指派给 ' + worker.assignment_value if worker.assignment_mode == 'assignee' else 'Label: ' + worker.assignment_value)
             values = [worker.name + '\n' + worker.repository, rule,
                       worker.target_thread_name or worker.target_thread_id, state, countdown, result]
             for col, value in enumerate(values):

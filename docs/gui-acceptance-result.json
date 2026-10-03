@@ -1,8 +1,9 @@
 {
-  "version": "0.4.5",
+  "version": "0.4.7",
   "status": "passed",
   "dark_system_palette": true,
   "editor_openings": 3,
+  "github_assignee_rule_visible": true,
   "repository_eof_preserves_configuration": true,
   "repository_refresh_recovery": true,
   "history_and_details_openings": 2,

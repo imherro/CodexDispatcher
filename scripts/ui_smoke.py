@@ -36,7 +36,7 @@ def main():
                         target_thread_id='019example-long-lived-thread', target_thread_name='修电脑项目会话')
         db.save_worker(worker)
         from dataclasses import replace
-        db.save_worker(replace(worker, id='worker-two', name='网站 agent', repository='example/website', assignment_value='website-agent', target_thread_id='019example-website-thread', target_thread_name='网站开发会话'))
+        db.save_worker(replace(worker, id='worker-two', name='网站 agent', repository='example/website', assignment_mode='assignee', assignment_value='agent-account', target_thread_id='019example-website-thread', target_thread_name='网站开发会话'))
         github, codex = Mock(), Mock()
         codex.active_threads.return_value = []
         github.list_repositories.return_value = ['example/project','example/website']
@@ -102,6 +102,8 @@ def main():
             time.sleep(.01)
         application.processEvents()
         assert window.editor_dialog.grab().save(str(output / 'worker-config.png'))
+        assert window.editor.fields['assignment_mode'].currentText() == 'GitHub 账号指派'
+        assert 'Assignees' in window.editor.assignment_hint.text()
         window.editor_dialog.reject()
         github.list_repositories.side_effect = DispatchError('GitHub CLI：Get https://api.github.com/user/repos: EOF')
         window.edit_worker('worker-two')
@@ -161,7 +163,7 @@ def main():
         window._force_close = True
         window.close()
         report = {'version': __version__, 'status': 'passed', 'dark_system_palette': True,
-                  'editor_openings': 3, 'repository_eof_preserves_configuration': True,
+                  'editor_openings': 3, 'github_assignee_rule_visible': True, 'repository_eof_preserves_configuration': True,
                   'repository_refresh_recovery': True, 'history_and_details_openings': 2,
                   'complete_notification_readable': True, 'tray_animation_while_hidden': True,
                   'tray_animation_multi_worker_and_stop': True, 'model_calls': 0}

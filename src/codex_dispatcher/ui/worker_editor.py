@@ -30,12 +30,16 @@ class WorkerEditor(QWidget):
                 self.fields['assignment_mode'] = combo = QComboBox()
                 combo.addItem('名称提及', 'mention')
                 combo.addItem('Label', 'label')
-                combo.addItem('Assignee', 'assignee')
+                combo.addItem('GitHub 账号指派', 'assignee')
                 combo.currentIndexChanged.connect(self.update_assignment_hint)
                 row = QHBoxLayout()
                 row.addWidget(combo)
                 row.addWidget(field, 1)
                 form.addRow(title, row)
+                self.assignment_hint = QLabel()
+                self.assignment_hint.setWordWrap(True)
+                self.assignment_hint.setStyleSheet('color: #68768a;')
+                form.addRow('', self.assignment_hint)
             elif key == 'repository':
                 self.repository_refresh = refresh = QPushButton('刷新仓库')
                 refresh.clicked.connect(self.refresh_repositories)
@@ -139,7 +143,13 @@ class WorkerEditor(QWidget):
         if field:
             mode = self.fields['assignment_mode'].currentData()
             field.setPlaceholderText({'mention':'例如：@codex-1070-rc（可省略 @）',
-                                      'label':'例如：agent:repair', 'assignee':'GitHub 用户名，例如 imherro'}.get(mode, ''))
+                                      'label':'例如：agent:repair', 'assignee':'真实 GitHub 用户名，例如 imherro（不加 @）'}.get(mode, ''))
+            if hasattr(self, 'assignment_hint'):
+                self.assignment_hint.setText({
+                    'mention': '匹配 Issue 标题、正文和新评论中的名称，可带 @。',
+                    'label': '匹配带有指定标签的打开 Issue；每个 Issue 自动通知一次。',
+                    'assignee': '通知 Assignees（负责人）包含此账号的打开 Issue 及新评论；每条只通知一次，跳过该账号自己的评论。',
+                }.get(mode, ''))
 
     def set_repositories(self, repositories):
         field = self.fields['repository']

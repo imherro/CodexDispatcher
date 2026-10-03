@@ -11,7 +11,7 @@ import webbrowser
 from dataclasses import replace
 from urllib.parse import urlparse
 
-from codex_dispatcher.domain.models import DispatchError, Issue, Worker, normalize_repository
+from codex_dispatcher.domain.models import DispatchError, Issue, Worker, normalize_repository, normalize_github_login
 from .security import redact
 
 
@@ -96,13 +96,18 @@ class GitHubService:
         if worker.assignment_mode == 'mention':
             return self._list_mentions(worker, repository)
         flag = '--label' if worker.assignment_mode == 'label' else '--assignee'
+        value = normalize_github_login(worker.assignment_value) if worker.assignment_mode == 'assignee' else worker.assignment_value
         # gh paginates up to this bound; surface saturation rather than silently losing backlog.
         data = self._query(['issue', 'list', '--repo', repository, '--state', 'open',
-                          flag, worker.assignment_value, '--limit', '1000', '--json',
+                          flag, value, '--limit', '1000', '--json',
                           'number,url,updatedAt,labels,assignees,state'])
         if len(data) >= 1000:
             raise DispatchError('候选 Issue 达到 1000 条查询上限，请收窄分配规则后重新检查')
-        return sorted((Issue.from_github(repository, row) for row in data), key=lambda issue: issue.number)
+        issues = {row['number']: Issue.from_github(repository, row) for row in data}
+        result = [issue for issue in issues.values() if issue.matches(worker)]
+        if worker.assignment_mode == 'assignee':
+            result.extend(self._list_comments(worker, repository, issues))
+        return sorted(result, key=lambda issue: (issue.number, issue.comment_id or 0))
 
     @staticmethod
     def _comment_issue(repository, comment):
@@ -114,12 +119,13 @@ class GitHubService:
         return int(number) if number.isascii() and number.isdigit() else None
 
     @staticmethod
-    def _comment_candidate(issue, comment):
+    def _comment_candidate(issue, comment, *, mode='mention'):
         identifier = comment.get('id')
         if type(identifier) is not int or identifier < 1:
             raise DispatchError('GitHub 返回的评论编号无效')
-        return replace(issue, title='', body=comment.get('body') or '',
-                       notification_key=f'mention:comment:{identifier}', comment_id=identifier)
+        return replace(issue, title='', body=(comment.get('body') or '') if mode == 'mention' else '',
+                       author_login=(comment.get('user') or {}).get('login') or '',
+                       notification_key=f'{mode}:comment:{identifier}', comment_id=identifier)
 
     def _list_mentions(self, worker, repository):
         # Literal matching supports virtual names that are not GitHub accounts.
@@ -133,6 +139,11 @@ class GitHubService:
             candidate = replace(issue, notification_key='mention:issue')
             if candidate.matches(worker):
                 result.append(candidate)
+        result.extend(self._list_comments(worker, repository, issues))
+        return sorted(result, key=lambda issue: (issue.number, issue.comment_id or 0))
+
+    def _list_comments(self, worker, repository, issues):
+        result = []
         if issues:
             # gh handles every REST page; comments on PRs / closed Issues are excluded.
             pages = self._query(['api', '--paginate', '--slurp',
@@ -141,10 +152,10 @@ class GitHubService:
                 for comment in page:
                     issue = issues.get(self._comment_issue(repository, comment))
                     if issue:
-                        candidate = self._comment_candidate(issue, comment)
+                        candidate = self._comment_candidate(issue, comment, mode=worker.assignment_mode)
                         if candidate.matches(worker):
                             result.append(candidate)
-        return sorted(result, key=lambda issue: (issue.number, issue.comment_id or 0))
+        return result
 
     def get_issue(self, repository, number, *, mention=False, comment_id=None):
         repository = normalize_repository(repository)
@@ -154,9 +165,10 @@ class GitHubService:
         data = self._query(['issue', 'view', str(int(number)), '--repo', repository, '--json',
                           fields])
         issue = Issue.from_github(repository, data, include_content=mention)
-        if not mention:
+        if not mention and comment_id is None:
             return issue
-        issue.notification_key = 'mention:issue'
+        if mention:
+            issue.notification_key = 'mention:issue'
         if comment_id is not None:
             if type(comment_id) is not int or comment_id < 1:
                 raise ValueError('评论编号无效')
@@ -166,10 +178,10 @@ class GitHubService:
                 if 'HTTP 404' not in str(exc):
                     raise
                 # Deleted or inaccessible source must not accidentally fall back to Issue text.
-                comment = {'id':comment_id, 'body':''}
+                return replace(issue, title='', body='', state='CLOSED', comment_id=comment_id)
             if self._comment_issue(repository, comment) != int(number):
-                comment = {'id':comment_id, 'body':''}
-            issue = self._comment_candidate(issue, comment)
+                return replace(issue, title='', body='', state='CLOSED', comment_id=comment_id)
+            issue = self._comment_candidate(issue, comment, mode='mention' if mention else 'assignee')
         return issue
 
     @staticmethod

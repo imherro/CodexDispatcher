@@ -43,6 +43,13 @@ def normalize_mention(value: str) -> str:
     return value
 
 
+def normalize_github_login(value: str) -> str:
+    value = value.strip()
+    if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?', value) or '--' in value:
+        raise ValueError('GitHub 指派账号请填写真实用户名，不要加 @，不能填写邮箱或网址')
+    return value
+
+
 def contains_mention(text: str, value: str) -> bool:
     name = normalize_mention(value)
     return re.search(r'(?<![A-Za-z0-9_@/.-])@?' + re.escape(name) + r'(?![A-Za-z0-9_@-])',
@@ -84,6 +91,8 @@ class Worker:
             raise ValueError('分配模式无效')
         if self.assignment_mode == 'mention':
             self.assignment_value = normalize_mention(self.assignment_value)
+        elif self.assignment_mode == 'assignee':
+            self.assignment_value = normalize_github_login(self.assignment_value)
         if not 1 <= self.poll_interval <= 60:
             raise ValueError('检查间隔必须为 1–60 分钟')
         validate_notification_template(self.notification_template)
@@ -115,6 +124,7 @@ class Issue:
     state: str = 'OPEN'
     notification_key: str = 'issue'
     comment_id: int | None = None
+    author_login: str = ''
 
     @classmethod
     def from_github(cls, repository, data, *, include_content=False):
@@ -139,7 +149,10 @@ class Issue:
                 return False
             return contains_mention(self.title + '\n' + self.body, worker.assignment_value)
         values = self.labels if worker.assignment_mode == 'label' else self.assignees
-        return worker.assignment_value.casefold() in {x.casefold() for x in values}
+        value = normalize_github_login(worker.assignment_value) if worker.assignment_mode == 'assignee' else worker.assignment_value
+        if worker.assignment_mode == 'assignee' and self.comment_id is not None and self.author_login.casefold() == value.casefold():
+            return False
+        return value.casefold() in {x.casefold() for x in values}
 
     def to_dict(self):
         return asdict(self)

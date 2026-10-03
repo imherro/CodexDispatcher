@@ -30,7 +30,7 @@ Windows 桌面通知器：多个 Worker 监测 GitHub 待办，通知对应的 C
 |---|---|---|
 | **名称提及（默认）** | `codex-1070-rc` | 打开的 Issue 标题、正文及评论中的 `codex-1070-rc` 或 `@codex-1070-rc` |
 | Label | `agent:repair` | Issue 标签 |
-| Assignee | `imherro` | Issue 分配的真实 GitHub 用户 |
+| **GitHub 账号指派** | `imherro`（不加 `@`） | Issue 的 Assignees（负责人）包含该真实 GitHub 账号；同时检查这些 Issue 的评论 |
 
 虚拟 @ 名称不必对应 GitHub 账号。例如评论：
 
@@ -42,11 +42,15 @@ Dispatcher 只做文本匹配，给绑定会话发送该评论的链接，让 ag
 
 @ 规则每个 Worker 对同一 Issue 的标题 / 正文通知一次，对每条评论各通知一次。**同一 Issue 上的新评论再次点名可以再次触发**，重复轮询、重启以及编辑已通知的原评论都不会自动重发。首次开启会检查已有打开 Issue 中尚未通知的提及。匹配不解析 Markdown，因此引用或代码块中的完整点名也会匹配。
 
-Label / Assignee 每个 Worker 对同一仓库 / Issue 自动通知一次，Issue 更新不会自动重发。所有规则在发送前重新检查状态和分配；默认跳过 `agent:running`、`agent:done`、`agent:blocked`。
+使用 **GitHub 账号指派**：编辑 Worker → 分配规则选择“GitHub 账号指派” → 填写实际账号（不加 `@`）→ 保存并开始监测。在 GitHub 的 Issue 右侧 Assignees 中分配给该账号即可，无需在标题、正文或评论中点名。配置的是接收任务的 GitHub 用户名，不是 Worker 名称或本机当前登录账号；读取仓库的账号只需有访问权限。多个负责人中包含该账号也匹配，大小写不敏感。
+
+GitHub 账号指派规则对每个 Issue 自动通知一次，对其中每条评论也各通知一次。评论无需点名；跳过指派账号本人发表的评论，避免 agent 汇报触发循环。作者账号来自 GitHub 返回的 `user.login`，不根据署名推断；如果人与 agent 共用该账号，人的评论也会被跳过，请使用不同账号。作者缺失的评论正常匹配。重复轮询、重启、编辑原评论或重新指派同一已通知 Issue 都不会重发。首次监测会检查已有打开 Issue 及评论中尚未通知的条目。
+
+Label 规则每个 Worker 对同一仓库 / Issue 自动通知一次，不监测新评论。所有规则在发送前重新检查状态和分配；若排队期间取消指派、删除评论或关闭 Issue，则跳过发送；默认跳过 `agent:running`、`agent:done`、`agent:blocked`。
 
 ## 通知与数据
 
-@ 规则读取文字用于确定是否匹配；Label / Assignee 只查元数据。SQLite 和通知只保存地址、编号等元数据，不保存或转述标题、正文、评论内容。评论通知带 `#issuecomment-ID`，agent 可以定位原文。
+名称提及规则读取文字用于确定是否匹配；Label 只查元数据。GitHub 账号指派规则按负责人、评论编号和真实作者匹配，不分析评论正文。SQLite 和通知只保存地址、编号等元数据，不保存或转述标题、正文、评论内容。评论通知带 `#issuecomment-ID`，agent 可以定位原文。
 
 Dispatcher 没有任务整理模型，也没有额外模型判断调用。空轮询、重复匹配不发消息，不连接 Codex 或读取目标项目。**agent 收到通知后的执行仍正常使用它自己的模型额度**。
 
@@ -94,7 +98,7 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-构建输出为 `dist/v0.4.6/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
+构建输出为 `dist/v0.4.7/CodexDispatcher` 及同目录下的 Windows x64 ZIP。分发整个应用目录，SDK runtime 已包含。
 
 默认测试使用 mock，不消耗真实模型额度，覆盖三种规则、评论去重、旧版迁移、图标按钮、格式验证与预览、桌面回执、持续忙碌排队及不确定发送恢复。
 

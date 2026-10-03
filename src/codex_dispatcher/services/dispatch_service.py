@@ -42,6 +42,8 @@ class DispatchService:
         return identifiers
 
     def _read_source(self, worker, number, notification_key):
+        if worker.assignment_mode == 'assignee' and notification_key.startswith('assignee:comment:'):
+            return self.github.get_issue(worker.repository, number, comment_id=int(notification_key.rsplit(':', 1)[1]))
         if worker.assignment_mode != 'mention':
             return self.github.get_issue(worker.repository, number)
         comment_id = None
@@ -61,6 +63,8 @@ class DispatchService:
                 report = (worker.assignment_mode == 'mention' and issue.comment_id is not None
                           and is_agent_report(issue.body, worker.assignment_value))
                 reason = '目标 agent 的署名汇报，不作为新任务' if report else 'Issue 已关闭、取消分配或有忽略标签'
+                if worker.assignment_mode == 'assignee' and issue.comment_id is not None and issue.author_login.casefold() == worker.assignment_value.casefold():
+                    reason = '指派账号本人发表的评论，不重复通知该账号'
                 self.db.update_record(identifier, status='ignored', finished_at=now(), error=reason)
                 return 'ignored'
             if self.db.get_worker(worker.id) and not self.db.get_worker(worker.id).enabled:
